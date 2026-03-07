@@ -1,4 +1,4 @@
-use bevy::{asset::AssetPlugin, prelude::*};
+use bevy::{asset::AssetPlugin, light::GlobalAmbientLight, prelude::*};
 use jackdaw::EditorPlugin;
 
 fn main() -> AppExit {
@@ -16,6 +16,12 @@ fn main() -> AppExit {
 }
 
 fn spawn_scene(mut commands: Commands) {
+    commands.insert_resource(GlobalAmbientLight {
+        color: Color::WHITE,
+        brightness: 400.0,
+        affects_lightmapped_meshes: true,
+    });
+
     commands.spawn((
         Name::new("Sun"),
         DirectionalLight {

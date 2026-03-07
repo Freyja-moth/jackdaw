@@ -270,6 +270,8 @@ fn finish_load_scene(world: &mut World, chosen: &std::path::Path) {
                     base_color_texture: jsn_def.base_color_texture.clone(),
                     normal_map_texture: jsn_def.normal_map_texture.clone(),
                     metallic_roughness_texture: jsn_def.metallic_roughness_texture.clone(),
+                    roughness_texture: jsn_def.roughness_texture.clone(),
+                    metallic_texture: jsn_def.metallic_texture.clone(),
                     emissive_texture: jsn_def.emissive_texture.clone(),
                     occlusion_texture: jsn_def.occlusion_texture.clone(),
                     depth_texture: jsn_def.depth_texture.clone(),
@@ -280,6 +282,7 @@ fn finish_load_scene(world: &mut World, chosen: &std::path::Path) {
                     emissive_intensity: jsn_def.emissive_intensity,
                     double_sided: jsn_def.double_sided,
                     flip_normal_map_y: jsn_def.flip_normal_map_y,
+                    is_gloss_map: jsn_def.is_gloss_map,
                 });
             }
         }
@@ -578,6 +581,8 @@ fn build_asset_manifest(world: &mut World) -> JsnAssets {
                 base_color_texture: def.base_color_texture.clone(),
                 normal_map_texture: def.normal_map_texture.clone(),
                 metallic_roughness_texture: def.metallic_roughness_texture.clone(),
+                roughness_texture: def.roughness_texture.clone(),
+                metallic_texture: def.metallic_texture.clone(),
                 emissive_texture: def.emissive_texture.clone(),
                 occlusion_texture: def.occlusion_texture.clone(),
                 depth_texture: def.depth_texture.clone(),
@@ -588,6 +593,7 @@ fn build_asset_manifest(world: &mut World) -> JsnAssets {
                 emissive_intensity: def.emissive_intensity,
                 double_sided: def.double_sided,
                 flip_normal_map_y: def.flip_normal_map_y,
+                is_gloss_map: def.is_gloss_map,
             })
         })
         .collect();

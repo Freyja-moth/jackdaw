@@ -66,6 +66,18 @@ pub fn setup_material_preview_scene(
         preview_layer.clone(),
     ));
 
+    // Fill light from opposite direction for balanced preview
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 2000.0,
+            shadows_enabled: false,
+            ..default()
+        },
+        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, 0.5, -2.5, 0.0)),
+        Visibility::Inherited,
+        preview_layer.clone(),
+    ));
+
     let preview_image = Image::new_target_texture(
         256,
         256,

@@ -8,7 +8,7 @@ use bevy::{
     },
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
-    render::render_resource::TextureDimension,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureSampleType},
 };
 
 use super::{
@@ -93,11 +93,73 @@ fn is_ktx2_non_2d(path: &Path) -> bool {
     layer_count > 1 || face_count > 1
 }
 
+/// Generate CPU-side mipmaps for uncompressed RGBA8 images via box filtering.
+/// Compressed formats (e.g. KTX2 with BC7) typically include mipmaps already.
+fn generate_cpu_mipmaps(image: &mut Image) {
+    let format = image.texture_descriptor.format;
+    if format != TextureFormat::Rgba8Unorm && format != TextureFormat::Rgba8UnormSrgb {
+        return;
+    }
+    let w = image.texture_descriptor.size.width;
+    let h = image.texture_descriptor.size.height;
+    if w <= 1 && h <= 1 {
+        return;
+    }
+    let mip_count = (w.max(h) as f32).log2().floor() as u32 + 1;
+    let Some(data) = image.data.as_mut() else {
+        return;
+    };
+
+    // Build mip chain by box-filtering from the previous level
+    let mut prev_offset: usize = 0;
+    let mut prev_w = w;
+    let mut prev_h = h;
+    for _ in 1..mip_count {
+        let new_w = (prev_w / 2).max(1);
+        let new_h = (prev_h / 2).max(1);
+        let mut mip = Vec::with_capacity((new_w * new_h * 4) as usize);
+        for y in 0..new_h {
+            for x in 0..new_w {
+                let mut rgba = [0u32; 4];
+                let mut count = 0u32;
+                for sy in 0..2u32 {
+                    for sx in 0..2u32 {
+                        let px = (x * 2 + sx).min(prev_w - 1);
+                        let py = (y * 2 + sy).min(prev_h - 1);
+                        let idx = prev_offset + (py * prev_w + px) as usize * 4;
+                        if idx + 3 < data.len() {
+                            rgba[0] += data[idx] as u32;
+                            rgba[1] += data[idx + 1] as u32;
+                            rgba[2] += data[idx + 2] as u32;
+                            rgba[3] += data[idx + 3] as u32;
+                            count += 1;
+                        }
+                    }
+                }
+                if count > 0 {
+                    mip.push((rgba[0] / count) as u8);
+                    mip.push((rgba[1] / count) as u8);
+                    mip.push((rgba[2] / count) as u8);
+                    mip.push((rgba[3] / count) as u8);
+                } else {
+                    mip.extend_from_slice(&[0, 0, 0, 255]);
+                }
+            }
+        }
+        prev_offset = data.len();
+        data.extend_from_slice(&mip);
+        prev_w = new_w;
+        prev_h = new_h;
+    }
+    image.texture_descriptor.mip_level_count = mip_count;
+}
+
 /// Load a material texture from disk, skipping cubemaps and other non-2D textures.
 fn load_material_image(
     path: &str,
     assets_dir: &Path,
     images: &mut Assets<Image>,
+    is_srgb: bool,
 ) -> Option<Handle<Image>> {
     let abs_path = assets_dir.join(path);
     // Pre-check: skip KTX2 cubemaps before decoding
@@ -108,11 +170,11 @@ fn load_material_image(
     }
     let bytes = std::fs::read(&abs_path).ok()?;
     let ext = abs_path.extension()?.to_str()?;
-    let image = Image::from_buffer(
+    let mut image = Image::from_buffer(
         &bytes,
         ImageType::Extension(ext),
         CompressedImageFormats::all(),
-        true,
+        is_srgb,
         ImageSampler::default(),
         RenderAssetUsages::default(),
     )
@@ -121,7 +183,78 @@ fn load_material_image(
     if image.texture_descriptor.dimension != TextureDimension::D2 {
         return None;
     }
+    // Reject non-float formats (e.g. R16Uint) incompatible with StandardMaterial samplers
+    let sample = image.texture_descriptor.format.sample_type(None, None);
+    if !matches!(sample, Some(TextureSampleType::Float { .. })) {
+        return None;
+    }
+    generate_cpu_mipmaps(&mut image);
     Some(images.add(image))
+}
+
+/// Combine standalone roughness and metallic greyscale images into a single
+/// RGBA image in Bevy's expected format: G = roughness, B = metallic, R = 0, A = 255.
+/// When `invert_roughness` is true, the roughness input is treated as a gloss map
+/// and inverted (roughness = 255 - gloss).
+fn combine_roughness_metallic(
+    roughness: Option<&Image>,
+    metallic: Option<&Image>,
+    invert_roughness: bool,
+) -> Image {
+    let (width, height) = roughness
+        .or(metallic)
+        .map(|img| {
+            (
+                img.texture_descriptor.size.width,
+                img.texture_descriptor.size.height,
+            )
+        })
+        .unwrap_or((1, 1));
+
+    let pixel_count = (width * height) as usize;
+    let mut data = vec![0u8; pixel_count * 4];
+
+    for i in 0..pixel_count {
+        let r_raw = roughness
+            .and_then(|img| greyscale_pixel(img, i))
+            .unwrap_or(255);
+        let r_val = if invert_roughness { 255 - r_raw } else { r_raw };
+        let m_val = metallic
+            .and_then(|img| greyscale_pixel(img, i))
+            .unwrap_or(0);
+        data[i * 4] = 0; // R - unused
+        data[i * 4 + 1] = r_val; // G - roughness
+        data[i * 4 + 2] = m_val; // B - metallic
+        data[i * 4 + 3] = 255; // A
+    }
+
+    let mut image = Image::new(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::default(),
+    );
+    generate_cpu_mipmaps(&mut image);
+    image
+}
+
+/// Extract a greyscale value from pixel `index` of an image, regardless of format.
+/// Returns the first channel (R) as a u8 approximation.
+fn greyscale_pixel(img: &Image, index: usize) -> Option<u8> {
+    let format = img.texture_descriptor.format;
+    let block_size = format.block_copy_size(None)? as usize;
+    let offset = index * block_size;
+    let data = img.data.as_ref()?;
+    if offset >= data.len() {
+        return None;
+    }
+    // For common 8-bit formats, first byte is the value we want
+    Some(data[offset])
 }
 
 pub(super) fn ensure_material_definitions(
@@ -164,30 +297,54 @@ pub(super) fn ensure_material_definitions(
         let base_color_image = def
             .base_color_texture
             .as_ref()
-            .and_then(|p| load_material_image(p, &assets_dir, &mut images));
+            .and_then(|p| load_material_image(p, &assets_dir, &mut images, true));
         let base_color_texture = base_color_image.clone();
         let normal_map_texture = def
             .normal_map_texture
             .as_ref()
-            .and_then(|p| load_material_image(p, &assets_dir, &mut images));
-        let metallic_roughness_texture = def
+            .and_then(|p| load_material_image(p, &assets_dir, &mut images, false));
+        let mut metallic_roughness_texture = def
             .metallic_roughness_texture
             .as_ref()
-            .and_then(|p| load_material_image(p, &assets_dir, &mut images));
+            .and_then(|p| load_material_image(p, &assets_dir, &mut images, false));
+
+        // Synthesize combined metallic-roughness from standalone textures if needed
+        if metallic_roughness_texture.is_none()
+            && (def.roughness_texture.is_some() || def.metallic_texture.is_some())
+        {
+            let roughness_img = def
+                .roughness_texture
+                .as_ref()
+                .and_then(|p| load_material_image(p, &assets_dir, &mut images, false))
+                .and_then(|h| images.get(&h).cloned());
+            let metallic_img = def
+                .metallic_texture
+                .as_ref()
+                .and_then(|p| load_material_image(p, &assets_dir, &mut images, false))
+                .and_then(|h| images.get(&h).cloned());
+            let combined = combine_roughness_metallic(
+                roughness_img.as_ref(),
+                metallic_img.as_ref(),
+                def.is_gloss_map,
+            );
+            metallic_roughness_texture = Some(images.add(combined));
+        }
+
         let emissive_texture = def
             .emissive_texture
             .as_ref()
-            .and_then(|p| load_material_image(p, &assets_dir, &mut images));
+            .and_then(|p| load_material_image(p, &assets_dir, &mut images, true));
         let occlusion_texture = def
             .occlusion_texture
             .as_ref()
-            .and_then(|p| load_material_image(p, &assets_dir, &mut images));
+            .and_then(|p| load_material_image(p, &assets_dir, &mut images, false));
         let depth_map = def
             .depth_texture
             .as_ref()
-            .and_then(|p| load_material_image(p, &assets_dir, &mut images));
+            .and_then(|p| load_material_image(p, &assets_dir, &mut images, false));
 
         let [r, g, b, a] = def.base_color;
+        let has_metallic_roughness_texture = metallic_roughness_texture.is_some();
         let material = materials.add(StandardMaterial {
             base_color: Color::srgba(r, g, b, a),
             base_color_texture,
@@ -196,8 +353,8 @@ pub(super) fn ensure_material_definitions(
             emissive_texture,
             occlusion_texture,
             depth_map,
-            metallic: def.metallic,
-            perceptual_roughness: def.perceptual_roughness,
+            metallic: if has_metallic_roughness_texture { 1.0 } else { def.metallic },
+            perceptual_roughness: if has_metallic_roughness_texture { 1.0 } else { def.perceptual_roughness },
             reflectance: def.reflectance,
             emissive: if def.emissive_intensity > 0.0 {
                 LinearRgba::WHITE * def.emissive_intensity
@@ -250,6 +407,7 @@ pub(super) fn set_material_def_repeat_mode(
                 image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
                     address_mode_u: ImageAddressMode::Repeat,
                     address_mode_v: ImageAddressMode::Repeat,
+                    anisotropy_clamp: 16,
                     ..ImageSamplerDescriptor::linear()
                 });
             } else {
@@ -276,6 +434,7 @@ pub(super) fn set_texture_repeat_mode(
             image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
                 address_mode_u: ImageAddressMode::Repeat,
                 address_mode_v: ImageAddressMode::Repeat,
+                anisotropy_clamp: 16,
                 ..ImageSamplerDescriptor::linear()
             });
             done.insert(path.clone());

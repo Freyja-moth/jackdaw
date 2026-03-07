@@ -11,6 +11,8 @@ pub struct MaterialDefinition {
     pub base_color_texture: Option<String>,
     pub normal_map_texture: Option<String>,
     pub metallic_roughness_texture: Option<String>,
+    pub roughness_texture: Option<String>,
+    pub metallic_texture: Option<String>,
     pub emissive_texture: Option<String>,
     pub occlusion_texture: Option<String>,
     pub depth_texture: Option<String>,
@@ -28,6 +30,8 @@ pub struct MaterialDefinition {
     pub double_sided: bool,
     #[serde(default)]
     pub flip_normal_map_y: bool,
+    #[serde(default)]
+    pub is_gloss_map: bool,
 }
 
 fn default_base_color() -> [f32; 4] {
@@ -45,6 +49,8 @@ impl Default for MaterialDefinition {
             base_color_texture: None,
             normal_map_texture: None,
             metallic_roughness_texture: None,
+            roughness_texture: None,
+            metallic_texture: None,
             emissive_texture: None,
             occlusion_texture: None,
             depth_texture: None,
@@ -55,6 +61,7 @@ impl Default for MaterialDefinition {
             emissive_intensity: 0.0,
             double_sided: false,
             flip_normal_map_y: false,
+            is_gloss_map: false,
         }
     }
 }
@@ -104,7 +111,7 @@ pub struct MaterialDefinitionCache {
 
 /// Compiled PBR filename regex pattern.
 pub fn pbr_filename_regex() -> Option<Regex> {
-    let pattern = r"(?i)^(.+?)[_\-\.\s](diffuse|diff|albedo|base|col|color|basecolor|metallic|metalness|metal|mtl|roughness|rough|rgh|normal|nor|nrm|nrml|norm|orm|emission|emissive|emit|ao|ambient|occlusion|displacement|displace|disp|dsp|height|heightmap|alpha|opacity|specularity|specular|spec|spc|gloss|glossy|glossiness|bump|bmp|b|n)\.(png|jpg|jpeg|ktx2|bmp|tga|webp)$";
+    let pattern = r"(?i)^(.+?)[_\-\.\s](diffuse|diff|albedo|base|col|color|basecolor|metallic|metalness|metal|mtl|roughness|rough|rgh|normal|normaldx|normalgl|nor|nrm|nrml|norm|orm|emission|emissive|emit|ao|ambient|occlusion|ambientocclusion|displacement|displace|disp|dsp|height|heightmap|alpha|opacity|specularity|specular|spec|spc|gloss|glossy|glossiness|bump|bmp|b|n)\.(png|jpg|jpeg|ktx2|bmp|tga|webp)$";
     Regex::new(pattern).ok()
 }
 
@@ -127,11 +134,20 @@ pub fn build_material_from_slots(name: String, slots: &[(String, String)]) -> Ma
             "diffuse" | "diff" | "albedo" | "base" | "col" | "color" | "basecolor" | "b" => {
                 def.base_color_texture = Some(asset_path.clone());
             }
-            "normal" | "nor" | "nrm" | "nrml" | "norm" | "bump" | "bmp" | "n" => {
+            "normalgl" | "nor" | "nrm" | "nrml" | "norm" | "bump" | "bmp" | "n" | "normal" => {
                 def.normal_map_texture = Some(asset_path.clone());
             }
-            "metallic" | "metalness" | "metal" | "mtl" | "roughness" | "rough" | "rgh"
-            | "orm" => {
+            "normaldx" => {
+                def.normal_map_texture = Some(asset_path.clone());
+                def.flip_normal_map_y = true;
+            }
+            "roughness" | "rough" | "rgh" => {
+                def.roughness_texture = Some(asset_path.clone());
+            }
+            "metallic" | "metalness" | "metal" | "mtl" => {
+                def.metallic_texture = Some(asset_path.clone());
+            }
+            "orm" => {
                 def.metallic_roughness_texture = Some(asset_path.clone());
             }
             "specular" | "specularity" | "spec" | "spc" => {
@@ -142,16 +158,15 @@ pub fn build_material_from_slots(name: String, slots: &[(String, String)]) -> Ma
             "emission" | "emissive" | "emit" => {
                 def.emissive_texture = Some(asset_path.clone());
             }
-            "ao" | "ambient" | "occlusion" => {
+            "ao" | "ambient" | "occlusion" | "ambientocclusion" => {
                 def.occlusion_texture = Some(asset_path.clone());
             }
             "displacement" | "displace" | "disp" | "dsp" | "height" | "heightmap" => {
                 def.depth_texture = Some(asset_path.clone());
             }
             "gloss" | "glossy" | "glossiness" => {
-                if def.metallic_roughness_texture.is_none() {
-                    def.metallic_roughness_texture = Some(asset_path.clone());
-                }
+                def.roughness_texture = Some(asset_path.clone());
+                def.is_gloss_map = true;
             }
             _ => {}
         }
@@ -177,7 +192,7 @@ pub fn is_ktx2_non_2d(path: &Path) -> bool {
 
 /// Scan a directory for PBR texture sets and auto-detect material definitions.
 pub fn detect_material_sets(dir: &Path, asset_root: &Path) -> Vec<MaterialDefinition> {
-    let pattern = r"(?i)^(.+?)[_\-\.\s](diffuse|diff|albedo|base|col|color|basecolor|metallic|metalness|metal|mtl|roughness|rough|rgh|normal|nor|nrm|nrml|norm|orm|emission|emissive|emit|ao|ambient|occlusion|displacement|displace|disp|dsp|height|heightmap|alpha|opacity|specularity|specular|spec|spc|gloss|glossy|glossiness|bump|bmp|b|n)\.(png|jpg|jpeg|ktx2|bmp|tga|webp)$";
+    let pattern = r"(?i)^(.+?)[_\-\.\s](diffuse|diff|albedo|base|col|color|basecolor|metallic|metalness|metal|mtl|roughness|rough|rgh|normal|normaldx|normalgl|nor|nrm|nrml|norm|orm|emission|emissive|emit|ao|ambient|occlusion|ambientocclusion|displacement|displace|disp|dsp|height|heightmap|alpha|opacity|specularity|specular|spec|spc|gloss|glossy|glossiness|bump|bmp|b|n)\.(png|jpg|jpeg|ktx2|bmp|tga|webp)$";
 
     let re = match Regex::new(pattern) {
         Ok(r) => r,
@@ -201,11 +216,20 @@ pub fn detect_material_sets(dir: &Path, asset_root: &Path) -> Vec<MaterialDefini
                 "diffuse" | "diff" | "albedo" | "base" | "col" | "color" | "basecolor" | "b" => {
                     def.base_color_texture = Some(asset_path.clone());
                 }
-                "normal" | "nor" | "nrm" | "nrml" | "norm" | "bump" | "bmp" | "n" => {
+                "normalgl" | "nor" | "nrm" | "nrml" | "norm" | "bump" | "bmp" | "n" | "normal" => {
                     def.normal_map_texture = Some(asset_path.clone());
                 }
-                "metallic" | "metalness" | "metal" | "mtl" | "roughness" | "rough" | "rgh"
-                | "orm" => {
+                "normaldx" => {
+                    def.normal_map_texture = Some(asset_path.clone());
+                    def.flip_normal_map_y = true;
+                }
+                "roughness" | "rough" | "rgh" => {
+                    def.roughness_texture = Some(asset_path.clone());
+                }
+                "metallic" | "metalness" | "metal" | "mtl" => {
+                    def.metallic_texture = Some(asset_path.clone());
+                }
+                "orm" => {
                     def.metallic_roughness_texture = Some(asset_path.clone());
                 }
                 "specular" | "specularity" | "spec" | "spc" => {
@@ -216,17 +240,15 @@ pub fn detect_material_sets(dir: &Path, asset_root: &Path) -> Vec<MaterialDefini
                 "emission" | "emissive" | "emit" => {
                     def.emissive_texture = Some(asset_path.clone());
                 }
-                "ao" | "ambient" | "occlusion" => {
+                "ao" | "ambient" | "occlusion" | "ambientocclusion" => {
                     def.occlusion_texture = Some(asset_path.clone());
                 }
                 "displacement" | "displace" | "disp" | "dsp" | "height" | "heightmap" => {
                     def.depth_texture = Some(asset_path.clone());
                 }
                 "gloss" | "glossy" | "glossiness" => {
-                    // Store as roughness slot (inversion deferred to v2)
-                    if def.metallic_roughness_texture.is_none() {
-                        def.metallic_roughness_texture = Some(asset_path.clone());
-                    }
+                    def.roughness_texture = Some(asset_path.clone());
+                    def.is_gloss_map = true;
                 }
                 // alpha, opacity — noted but not directly mapped in v1
                 _ => {}
@@ -237,6 +259,8 @@ pub fn detect_material_sets(dir: &Path, asset_root: &Path) -> Vec<MaterialDefini
         if def.base_color_texture.is_some()
             || def.normal_map_texture.is_some()
             || def.metallic_roughness_texture.is_some()
+            || def.roughness_texture.is_some()
+            || def.metallic_texture.is_some()
             || def.emissive_texture.is_some()
             || def.occlusion_texture.is_some()
             || def.depth_texture.is_some()

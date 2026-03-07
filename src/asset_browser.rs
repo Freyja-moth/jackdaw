@@ -5,7 +5,7 @@ use bevy::{
     feathers::theme::ThemedText,
     image::{CompressedImageFormats, ImageSampler, ImageType},
     prelude::*,
-    render::render_resource::{Extent3d, TextureDimension},
+    render::render_resource::{Extent3d, TextureDimension, TextureSampleType},
     tasks::{AsyncComputeTaskPool, Task, futures_lite::future},
     ui_widgets::observe,
     window::{PrimaryWindow, RawHandleWrapper},
@@ -765,6 +765,12 @@ fn extract_array_layers(
     ) else {
         return;
     };
+
+    // Reject non-float formats (e.g. R16Uint) incompatible with UI ImageNode rendering
+    let sample = image.texture_descriptor.format.sample_type(None, None);
+    if !matches!(sample, Some(TextureSampleType::Float { .. })) {
+        return;
+    }
 
     let layer_count = preview_state.selected_info.as_ref().unwrap().layer_count;
     let Some(ref data) = image.data else {

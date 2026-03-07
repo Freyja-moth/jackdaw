@@ -151,6 +151,10 @@ pub struct JsnMaterialDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metallic_roughness_texture: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roughness_texture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metallic_texture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive_texture: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occlusion_texture: Option<String>,
@@ -170,6 +174,8 @@ pub struct JsnMaterialDefinition {
     pub double_sided: bool,
     #[serde(default)]
     pub flip_normal_map_y: bool,
+    #[serde(default)]
+    pub is_gloss_map: bool,
 }
 
 fn default_base_color() -> [f32; 4] {

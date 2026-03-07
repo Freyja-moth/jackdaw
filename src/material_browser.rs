@@ -305,6 +305,8 @@ fn update_preview_area(
             ("Base Color", "base_color", &def.base_color_texture),
             ("Normal", "normal", &def.normal_map_texture),
             ("Metal/Rough", "metallic_roughness", &def.metallic_roughness_texture),
+            ("Roughness", "roughness", &def.roughness_texture),
+            ("Metallic", "metallic", &def.metallic_texture),
             ("Emissive", "emissive", &def.emissive_texture),
             ("Occlusion", "occlusion", &def.occlusion_texture),
             ("Depth", "depth", &def.depth_texture),

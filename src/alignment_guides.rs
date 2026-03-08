@@ -164,7 +164,7 @@ fn draw_alignment_guides(
     modal_state: Res<ModalTransformState>,
     viewport_drag: Res<ViewportDragState>,
     transforms: Query<&GlobalTransform>,
-    camera_query: Query<&GlobalTransform, (With<Camera3d>, With<crate::EditorEntity>)>,
+    camera_query: Query<&GlobalTransform, With<crate::viewport::MainViewportCamera>>,
     selected: Query<(Entity, &GlobalTransform, Option<&BrushMeshCache>), With<Selected>>,
     mut selected_transforms: Query<&mut Transform, With<Selected>>,
     children_query: Query<&Children>,

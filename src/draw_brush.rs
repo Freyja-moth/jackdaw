@@ -1,5 +1,7 @@
 use bevy::{
     input_focus::InputFocus,
+    light::{NotShadowCaster, NotShadowReceiver},
+    mesh::{Indices, PrimitiveTopology},
     picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility},
     prelude::*,
     ui::UiGlobalTransform,
@@ -7,19 +9,20 @@ use bevy::{
 
 use crate::{
     EditorEntity,
-    brush::BrushFaceEntity,
+    brush::{BrushFaceEntity, BrushMaterialPalette, TextureMaterialCache},
     commands::{
         CommandGroup, CommandHistory, DespawnEntity, EditorCommand, snapshot_entity,
         snapshot_rebuild,
     },
+    material_definition::MaterialDefinitionCache,
     selection::{Selected, Selection},
     snapping::SnapSettings,
-    viewport::SceneViewport,
+    viewport::{MainViewportCamera, SceneViewport},
     viewport_util::window_to_viewport_cursor,
 };
 use jackdaw_geometry::{
     brush_planes_to_world, brushes_intersect, clean_degenerate_faces, compute_brush_geometry,
-    compute_face_tangent_axes, subtract_brush,
+    compute_face_tangent_axes, compute_face_uvs, subtract_brush, triangulate_face,
 };
 use jackdaw_jsn::{Brush, BrushFaceData, BrushPlane};
 
@@ -102,25 +105,48 @@ impl EditorCommand for CreateBrushCommand {
     }
 }
 
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct DrawBrushGizmoGroup;
+
 pub struct DrawBrushPlugin;
+
+#[derive(Component)]
+struct DrawPreviewMesh;
+
+#[derive(Component)]
+struct CutResultPreviewMesh;
+
+/// Marker for brush face entities hidden during cut preview.
+#[derive(Component)]
+struct CutPreviewHidden;
 
 impl Plugin for DrawBrushPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DrawBrushState>().add_systems(
-            Update,
-            (
-                draw_brush_activate,
-                draw_brush_update,
-                draw_brush_release,
-                draw_brush_confirm,
-                draw_brush_cancel,
-                draw_brush_preview,
-                join_selected_brushes,
-            )
-                .chain()
-                .run_if(in_state(crate::AppState::Editor)),
-        );
+        app.init_resource::<DrawBrushState>()
+            .init_gizmo_group::<DrawBrushGizmoGroup>()
+            .add_systems(Startup, configure_draw_brush_gizmos)
+            .add_systems(
+                Update,
+                (
+                    draw_brush_activate,
+                    draw_brush_update,
+                    draw_brush_release,
+                    draw_brush_confirm,
+                    draw_brush_cancel,
+                    draw_brush_preview,
+                    manage_draw_preview_mesh
+                        .after(crate::brush::mesh::regenerate_brush_meshes),
+                    join_selected_brushes,
+                )
+                    .chain()
+                    .run_if(in_state(crate::AppState::Editor)),
+            );
     }
+}
+
+fn configure_draw_brush_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+    let (config, _) = config_store.config_mut::<DrawBrushGizmoGroup>();
+    config.depth_bias = -1.0;
 }
 
 fn draw_brush_activate(
@@ -204,7 +230,7 @@ fn draw_brush_activate(
 fn draw_brush_update(
     mut draw_state: ResMut<DrawBrushState>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     snap_settings: Res<SnapSettings>,
@@ -342,7 +368,7 @@ fn draw_brush_release(
     mouse: Res<ButtonInput<MouseButton>>,
     mut draw_state: ResMut<DrawBrushState>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
 ) {
     if !mouse.just_released(MouseButton::Left) {
@@ -399,7 +425,7 @@ fn draw_brush_confirm(
     mouse: Res<ButtonInput<MouseButton>>,
     mut draw_state: ResMut<DrawBrushState>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     mut commands: Commands,
 ) {
@@ -469,30 +495,26 @@ fn draw_brush_confirm(
                 return; // No depth, keep extruding
             }
             let active_owned = active.clone();
-            if !active_owned.polygon_vertices.is_empty() {
-                // Polygon mode
-                draw_state.active = None;
-                if active_owned.append_target.is_some() {
-                    append_to_brush(&active_owned, &mut commands);
-                } else {
-                    spawn_polygon_brush(&active_owned, &mut commands);
-                }
-            } else {
-                match active_owned.mode {
-                    DrawMode::Add => {
-                        draw_state.active = None;
+            match active_owned.mode {
+                DrawMode::Add => {
+                    draw_state.active = None;
+                    if !active_owned.polygon_vertices.is_empty() {
                         if active_owned.append_target.is_some() {
                             append_to_brush(&active_owned, &mut commands);
                         } else {
-                            spawn_drawn_brush(&active_owned, &mut commands);
+                            spawn_polygon_brush(&active_owned, &mut commands);
                         }
+                    } else if active_owned.append_target.is_some() {
+                        append_to_brush(&active_owned, &mut commands);
+                    } else {
+                        spawn_drawn_brush(&active_owned, &mut commands);
                     }
-                    DrawMode::Cut => {
-                        subtract_drawn_brush(&active_owned, &mut commands);
-                        commands.queue(|world: &mut World| {
-                            world.resource_mut::<DrawBrushState>().active = None;
-                        });
-                    }
+                }
+                DrawMode::Cut => {
+                    subtract_drawn_brush(&active_owned, &mut commands);
+                    commands.queue(|world: &mut World| {
+                        world.resource_mut::<DrawBrushState>().active = None;
+                    });
                 }
             }
         }
@@ -504,7 +526,7 @@ fn draw_brush_cancel(
     mouse: Res<ButtonInput<MouseButton>>,
     mut draw_state: ResMut<DrawBrushState>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
 ) {
     let Some(ref mut active) = draw_state.active else {
@@ -549,7 +571,7 @@ const CUT_COLOR: Color = Color::srgb(1.0, 0.2, 0.2);
 fn draw_brush_preview(
     draw_state: Res<DrawBrushState>,
     snap_settings: Res<SnapSettings>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<DrawBrushGizmoGroup>,
     brushes: Query<(&Brush, &GlobalTransform)>,
 ) {
     let Some(ref active) = draw_state.active else {
@@ -663,6 +685,7 @@ fn draw_brush_preview(
                 for &v in verts {
                     gizmos.line(v, v + offset, color);
                 }
+
             } else {
                 // Cuboid wireframe
                 let base = footprint_corners(active);
@@ -682,32 +705,8 @@ fn draw_brush_preview(
                     gizmos.line(base[i], top[i], color);
                 }
 
-                // Cut mode: show intersection outlines
-                if active.mode == DrawMode::Cut {
-                    let cutter_planes = build_cutter_planes(active);
-                    for (brush, brush_tf) in &brushes {
-                        let (_, rotation, translation) = brush_tf.to_scale_rotation_translation();
-                        let world_target =
-                            brush_planes_to_world(&brush.faces, rotation, translation);
-                        let mut combined = world_target;
-                        combined.extend_from_slice(&cutter_planes);
-                        let (verts, polys) = compute_brush_geometry(&combined);
-                        if verts.len() < 4 {
-                            continue;
-                        }
-                        for polygon in &polys {
-                            if polygon.len() < 2 {
-                                continue;
-                            }
-                            for i in 0..polygon.len() {
-                                let a = verts[polygon[i]];
-                                let b = verts[polygon[(i + 1) % polygon.len()]];
-                                gizmos.line(a, b, color);
-                            }
-                        }
-                    }
-                }
             }
+
         }
     }
 }
@@ -997,7 +996,7 @@ fn ray_plane_intersection(ray: Ray3d, plane_point: Vec3, plane_normal: Vec3) -> 
 /// Grid points are world-aligned (fixed at world-space multiples of `inc`),
 /// so only the visible window moves with the cursor — individual crosses stay put.
 fn draw_plane_grid(
-    gizmos: &mut Gizmos,
+    gizmos: &mut Gizmos<DrawBrushGizmoGroup>,
     plane: &DrawPlane,
     center: Vec3,
     snap_settings: &SnapSettings,
@@ -1212,6 +1211,273 @@ fn spawn_polygon_brush(active: &ActiveDraw, commands: &mut Commands) {
     });
 }
 
+
+fn manage_draw_preview_mesh(
+    draw_state: Res<DrawBrushState>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    preview_query: Query<Entity, With<DrawPreviewMesh>>,
+    result_preview_query: Query<Entity, With<CutResultPreviewMesh>>,
+    brushes: Query<(Entity, &Brush, &GlobalTransform)>,
+    hidden_query: Query<Entity, (With<CutPreviewHidden>, With<Brush>)>,
+    mut visibility_query: Query<&mut Visibility>,
+    palette: Res<BrushMaterialPalette>,
+    texture_cache: Res<TextureMaterialCache>,
+    mat_def_cache: Res<MaterialDefinitionCache>,
+    mut cached_add_material: Local<Option<Handle<StandardMaterial>>>,
+    mut cached_cut_material: Local<Option<Handle<StandardMaterial>>>,
+    mut cached_cut_face_material: Local<Option<Handle<StandardMaterial>>>,
+    mut cached_preview_key: Local<Option<(Vec3, Vec3, f32, Vec<Vec3>)>>,
+) {
+    // Show preview for both Add and Cut during extrude phase
+    let should_show = draw_state
+        .active
+        .as_ref()
+        .is_some_and(|a| a.phase == DrawPhase::ExtrudingDepth);
+
+    // Despawn existing preview meshes if we shouldn't show
+    if !should_show {
+        for entity in preview_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        for entity in result_preview_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        // Restore hidden brush faces
+        for entity in hidden_query.iter() {
+            if let Ok(mut vis) = visibility_query.get_mut(entity) {
+                *vis = Visibility::Inherited;
+            }
+            commands.entity(entity).remove::<CutPreviewHidden>();
+        }
+        *cached_preview_key = None;
+        return;
+    }
+
+    let active = draw_state.active.as_ref().unwrap();
+
+    // Cache check: skip rebuild if cutter hasn't changed and preview entities exist
+    let current_key = (
+        active.corner1,
+        active.corner2,
+        active.depth,
+        active.polygon_vertices.clone(),
+    );
+    if let Some(ref prev_key) = *cached_preview_key {
+        let same = prev_key.0.abs_diff_eq(current_key.0, 1e-6)
+            && prev_key.1.abs_diff_eq(current_key.1, 1e-6)
+            && (prev_key.2 - current_key.2).abs() < 1e-6
+            && prev_key.3.len() == current_key.3.len()
+            && prev_key.3.iter().zip(current_key.3.iter()).all(|(a, b)| a.abs_diff_eq(*b, 1e-6));
+        if same && (!preview_query.is_empty() || !result_preview_query.is_empty()) {
+            return;
+        }
+    }
+    *cached_preview_key = Some(current_key);
+
+    // Build volume planes based on draw type
+    let cutter_planes = if !active.polygon_vertices.is_empty() {
+        build_cutter_planes_polygon(active)
+    } else {
+        build_cutter_planes(active)
+    };
+
+    // Compute mesh geometry from planes
+    let (verts, face_polys) = compute_brush_geometry(&cutter_planes);
+    if verts.len() < 4 {
+        for entity in preview_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        for entity in result_preview_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        // Restore hidden brush faces since geometry is invalid
+        for entity in hidden_query.iter() {
+            if let Ok(mut vis) = visibility_query.get_mut(entity) {
+                *vis = Visibility::Inherited;
+            }
+            commands.entity(entity).remove::<CutPreviewHidden>();
+        }
+        return;
+    }
+
+    // Build triangle mesh from face polygons
+    let positions: Vec<[f32; 3]> = verts.iter().map(|v| v.to_array()).collect();
+    let mut all_indices: Vec<u32> = Vec::new();
+    for polygon in &face_polys {
+        if polygon.len() < 3 {
+            continue;
+        }
+        let tris = triangulate_face(polygon);
+        for tri in &tris {
+            all_indices.extend_from_slice(&[tri[0], tri[1], tri[2]]);
+        }
+    }
+
+    let normals = vec![[0.0, 0.0, 1.0]; positions.len()];
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_indices(Indices::U32(all_indices));
+
+    // Mode-dependent material color
+    let material = match active.mode {
+        DrawMode::Add => cached_add_material.get_or_insert_with(|| {
+            materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.6, 0.0, 0.25),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                cull_mode: None,
+                ..default()
+            })
+        }),
+        DrawMode::Cut => cached_cut_material.get_or_insert_with(|| {
+            materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.15, 0.15, 0.4),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                cull_mode: None,
+                ..default()
+            })
+        }),
+    };
+
+    // Despawn old preview meshes (do NOT restore hidden faces — they stay hidden while cut is active)
+    for entity in preview_query.iter() {
+        commands.entity(entity).despawn();
+    }
+    for entity in result_preview_query.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    // Spawn cutter volume preview
+    commands.spawn((
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(material.clone()),
+        Transform::default(),
+        DrawPreviewMesh,
+        NotShadowCaster,
+        NotShadowReceiver,
+        EditorEntity,
+    ));
+
+    // In Cut mode, spawn solid result preview meshes for affected brushes
+    if active.mode == DrawMode::Cut {
+        for (brush_entity, brush, brush_tf) in brushes.iter() {
+            let (_, rotation, translation) = brush_tf.to_scale_rotation_translation();
+            let world_target = brush_planes_to_world(&brush.faces, rotation, translation);
+
+            if !brushes_intersect(&world_target, &cutter_planes) {
+                continue;
+            }
+
+            // Hide the original brush entity (Bevy propagates to all descendants)
+            if hidden_query.get(brush_entity).is_err() {
+                if let Ok(mut vis) = visibility_query.get_mut(brush_entity) {
+                    *vis = Visibility::Hidden;
+                }
+                commands.entity(brush_entity).insert(CutPreviewHidden);
+            }
+
+            let kept_fragments = subtract_brush(&world_target, &cutter_planes);
+            for fragment_faces in &kept_fragments {
+                let (frag_verts, frag_polys) = compute_brush_geometry(fragment_faces);
+                if frag_verts.len() < 4 {
+                    continue;
+                }
+
+                // Shrink vertices slightly toward centroid to prevent z-fighting
+                let centroid = frag_verts.iter().sum::<Vec3>() / frag_verts.len() as f32;
+                let frag_verts: Vec<Vec3> = frag_verts
+                    .iter()
+                    .map(|&v| v + (centroid - v) * 0.002)
+                    .collect();
+
+                for (face_idx, face_data) in fragment_faces.iter().enumerate() {
+                    let indices = &frag_polys[face_idx];
+                    if indices.len() < 3 {
+                        continue;
+                    }
+
+                    let positions: Vec<[f32; 3]> = indices
+                        .iter()
+                        .map(|&vi| frag_verts[vi].to_array())
+                        .collect();
+                    let normals: Vec<[f32; 3]> =
+                        vec![face_data.plane.normal.to_array(); indices.len()];
+                    let uvs = compute_face_uvs(
+                        &frag_verts,
+                        indices,
+                        face_data.plane.normal,
+                        face_data.uv_offset,
+                        face_data.uv_scale,
+                        face_data.uv_rotation,
+                    );
+
+                    let local_tris =
+                        triangulate_face(&(0..indices.len()).collect::<Vec<_>>());
+                    let flat_indices: Vec<u32> =
+                        local_tris.iter().flat_map(|t| t.iter().copied()).collect();
+
+                    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+                    mesh.insert_indices(Indices::U32(flat_indices));
+
+                    // Check if this face was created by the cut (normal matches a cutter plane)
+                    let is_cut_face = cutter_planes.iter().any(|cp| {
+                        face_data.plane.normal.abs_diff_eq(cp.plane.normal, 0.01)
+                            && (face_data.plane.distance - cp.plane.distance).abs() < 0.01
+                    });
+
+                    let material = if is_cut_face {
+                        cached_cut_face_material.get_or_insert_with(|| {
+                            materials.add(StandardMaterial {
+                                base_color: Color::srgba(1.0, 0.3, 0.1, 0.5),
+                                alpha_mode: AlphaMode::Blend,
+                                unlit: true,
+                                cull_mode: None,
+                                ..default()
+                            })
+                        }).clone()
+                    } else {
+                        match (&face_data.material_name, &face_data.texture_path) {
+                            (Some(name), _) => mat_def_cache
+                                .entries
+                                .get(name)
+                                .map(|e| e.material.clone())
+                                .unwrap_or_else(|| palette.materials[0].clone()),
+                            (None, Some(path)) => texture_cache
+                                .entries
+                                .get(path)
+                                .map(|e| e.material.clone())
+                                .unwrap_or_else(|| palette.materials[0].clone()),
+                            (None, None) => palette
+                                .materials
+                                .get(face_data.material_index)
+                                .cloned()
+                                .unwrap_or_else(|| palette.materials[0].clone()),
+                        }
+                    };
+
+                    commands.spawn((
+                        Mesh3d(meshes.add(mesh)),
+                        MeshMaterial3d(material),
+                        Visibility::Inherited,
+                        Transform::default(),
+                        CutResultPreviewMesh,
+                        NotShadowCaster,
+                        NotShadowReceiver,
+                        EditorEntity,
+                    ));
+                }
+            }
+        }
+    }
+}
+
 /// Compute the 4 world-space corners of the footprint rectangle.
 fn footprint_corners(active: &ActiveDraw) -> [Vec3; 4] {
     let plane = &active.plane;
@@ -1313,9 +1579,72 @@ fn build_cutter_planes(active: &ActiveDraw) -> Vec<BrushFaceData> {
     ]
 }
 
+/// Build N+2 world-space cutter planes from a polygon prism ActiveDraw.
+fn build_cutter_planes_polygon(active: &ActiveDraw) -> Vec<BrushFaceData> {
+    let verts = &active.polygon_vertices;
+    let normal = active.plane.normal;
+    let depth = active.depth;
+    let half_depth = depth.abs() / 2.0;
+    let centroid: Vec3 = verts.iter().sum::<Vec3>() / verts.len() as f32;
+    let center = centroid + normal * depth / 2.0;
+
+    let mut faces = Vec::new();
+
+    // Top cap (+normal)
+    faces.push(BrushFaceData {
+        plane: BrushPlane {
+            normal,
+            distance: normal.dot(center) + half_depth,
+        },
+        uv_scale: Vec2::ONE,
+        ..default()
+    });
+
+    // Bottom cap (-normal)
+    faces.push(BrushFaceData {
+        plane: BrushPlane {
+            normal: -normal,
+            distance: (-normal).dot(center) + half_depth,
+        },
+        uv_scale: Vec2::ONE,
+        ..default()
+    });
+
+    // Side planes: one per polygon edge
+    let n = verts.len();
+    for i in 0..n {
+        let a = verts[i];
+        let b = verts[(i + 1) % n];
+        let edge = b - a;
+        let mut side_normal = edge.cross(normal).normalize_or_zero();
+        if side_normal.length_squared() < 0.5 {
+            continue;
+        }
+        // Ensure outward-facing
+        if side_normal.dot(a - centroid) < 0.0 {
+            side_normal = -side_normal;
+        }
+        let distance = side_normal.dot(a);
+        faces.push(BrushFaceData {
+            plane: BrushPlane {
+                normal: side_normal,
+                distance,
+            },
+            uv_scale: Vec2::ONE,
+            ..default()
+        });
+    }
+
+    faces
+}
+
 /// Perform CSG subtraction: subtract the drawn cuboid from all intersecting brushes.
 fn subtract_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
-    let cutter_planes = build_cutter_planes(active);
+    let cutter_planes = if active.polygon_vertices.is_empty() {
+        build_cutter_planes(active)
+    } else {
+        build_cutter_planes_polygon(active)
+    };
 
     commands.queue(move |world: &mut World| {
         // Phase 1: Collect all brush entities and their data

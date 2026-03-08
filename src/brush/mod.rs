@@ -3,7 +3,7 @@ mod geometry;
 mod gizmo_overlay;
 mod hull;
 mod interaction;
-mod mesh;
+pub(crate) mod mesh;
 
 use std::collections::HashMap;
 

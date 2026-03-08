@@ -7,12 +7,11 @@ use bevy::{
 };
 
 use crate::{
-    EditorEntity,
     commands::{CommandHistory, SetTransform},
     gizmos::{GizmoAxis, GizmoDragState, GizmoHoverState, GizmoMode},
     selection::{Selected, Selection},
     snapping::SnapSettings,
-    viewport::SceneViewport,
+    viewport::{MainViewportCamera, SceneViewport},
     viewport_util::window_to_viewport_cursor,
 };
 
@@ -104,7 +103,7 @@ fn modal_activate(
     mut gizmo_mode: ResMut<GizmoMode>,
     windows: Query<&Window>,
     mut cursor_query: Query<&mut CursorOptions, With<Window>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     edit_mode: Res<crate::brush::EditMode>,
     draw_state: Res<crate::draw_brush::DrawBrushState>,
@@ -206,7 +205,7 @@ fn modal_constrain(keyboard: Res<ButtonInput<KeyCode>>, mut modal: ResMut<ModalT
 fn modal_update(
     modal: Res<ModalTransformState>,
     mut transforms: Query<&mut Transform, With<Selected>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     windows: Query<&Window>,
     keyboard: Res<ButtonInput<KeyCode>>,
     snap_settings: Res<SnapSettings>,
@@ -461,7 +460,7 @@ fn viewport_drag_detect(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     selection: Res<Selection>,
     transforms: Query<(&GlobalTransform, &Transform)>,
@@ -599,7 +598,7 @@ fn viewport_drag_detect(
 fn viewport_drag_update(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     snap_settings: Res<SnapSettings>,

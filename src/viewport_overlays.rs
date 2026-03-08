@@ -358,7 +358,7 @@ fn draw_camera_gizmo(
 fn draw_coordinate_indicator(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    camera_query: Query<&GlobalTransform, (With<Camera3d>, With<crate::EditorEntity>)>,
+    camera_query: Query<&GlobalTransform, With<crate::viewport::MainViewportCamera>>,
 ) {
     if !settings.show_coordinate_indicator {
         return;

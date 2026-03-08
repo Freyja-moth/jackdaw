@@ -7,10 +7,9 @@ use bevy::{
 use super::{
     CHUNK_SIZE, TerrainBrushSettings, TerrainDirtyChunks, TerrainEditMode, TerrainSculptState,
 };
-use crate::EditorEntity;
 use crate::commands::{CommandHistory, EditorCommand};
 use crate::selection::Selection;
-use crate::viewport::SceneViewport;
+use crate::viewport::{MainViewportCamera, SceneViewport};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
@@ -59,7 +58,7 @@ impl EditorCommand for SetTerrainHeights {
 fn terrain_sculpt_interaction(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     mut terrain_query: Query<(
         Entity,

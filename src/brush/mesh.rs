@@ -442,7 +442,7 @@ pub(super) fn set_texture_repeat_mode(
     }
 }
 
-pub(super) fn regenerate_brush_meshes(
+pub fn regenerate_brush_meshes(
     mut commands: Commands,
     changed_brushes: Query<
         (

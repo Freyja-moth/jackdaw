@@ -5,12 +5,11 @@ use bevy::{
 };
 
 use crate::{
-    EditorEntity,
     commands::{CommandHistory, SetTransform},
     modal_transform::ModalTransformState,
     selection::{Selected, Selection},
     snapping::SnapSettings,
-    viewport::SceneViewport,
+    viewport::{MainViewportCamera, SceneViewport},
     viewport_util::{point_to_segment_dist, window_to_viewport_cursor},
 };
 
@@ -128,7 +127,7 @@ fn handle_gizmo_mode_keys(
 fn handle_gizmo_hover(
     selection: Res<Selection>,
     transforms: Query<&GlobalTransform, With<Selected>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     windows: Query<&Window>,
     mode: Res<GizmoMode>,
     space: Res<GizmoSpace>,
@@ -217,7 +216,7 @@ fn handle_gizmo_hover(
 fn handle_gizmo_drag(
     selection: Res<Selection>,
     mut transforms: Query<(&GlobalTransform, &mut Transform), With<Selected>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     windows: Query<&Window>,
     mut cursor_query: Query<&mut CursorOptions, With<Window>>,
     mouse: Res<ButtonInput<MouseButton>>,

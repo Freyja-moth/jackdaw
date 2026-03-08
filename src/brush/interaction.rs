@@ -3,11 +3,10 @@ use std::collections::HashSet;
 use bevy::{input_focus::InputFocus, prelude::*};
 
 use crate::{
-    EditorEntity,
     commands::{CommandHistory, snapshot_entity},
     draw_brush::CreateBrushCommand,
     selection::{Selected, Selection},
-    viewport::SceneViewport,
+    viewport::{MainViewportCamera, SceneViewport},
     viewport_util::{point_in_polygon_2d, point_to_segment_dist, window_to_viewport_cursor},
 };
 
@@ -15,7 +14,10 @@ const MIN_EXTRUDE_DEPTH: f32 = 0.01;
 
 use super::hull::rebuild_brush_from_vertices;
 use super::{BrushEditMode, BrushMeshCache, BrushSelection, EditMode, SetBrush};
-use jackdaw_geometry::{EPSILON, compute_face_tangent_axes, point_inside_all_planes};
+use jackdaw_geometry::{
+    EPSILON, brush_planes_to_world, compute_brush_geometry, compute_face_tangent_axes,
+    point_inside_all_planes,
+};
 use jackdaw_jsn::{Brush, BrushFaceData, BrushPlane};
 
 pub(super) fn handle_edit_mode_keys(
@@ -127,7 +129,7 @@ pub(super) fn brush_face_interact(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     face_entities: Query<(Entity, &super::BrushFaceEntity, &GlobalTransform)>,
     mut brush_selection: ResMut<BrushSelection>,
@@ -576,7 +578,7 @@ pub(super) fn brush_vertex_interact(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     brush_transforms: Query<&GlobalTransform>,
     mut brush_selection: ResMut<BrushSelection>,
@@ -874,7 +876,7 @@ pub(super) fn brush_edge_interact(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     brush_transforms: Query<&GlobalTransform>,
     mut brush_selection: ResMut<BrushSelection>,
@@ -1362,10 +1364,19 @@ pub(super) fn handle_brush_delete(
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ClipMode {
+    #[default]
+    KeepFront,
+    KeepBack,
+    Split,
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct ClipState {
     pub points: Vec<Vec3>,
     pub preview_plane: Option<BrushPlane>,
+    pub mode: ClipMode,
 }
 
 pub(super) fn handle_clip_mode(
@@ -1375,20 +1386,23 @@ pub(super) fn handle_clip_mode(
     input_focus: Res<InputFocus>,
     windows: Query<&Window>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     brush_selection: Res<BrushSelection>,
     mut brushes: Query<&mut Brush>,
     brush_transforms: Query<&GlobalTransform>,
     brush_caches: Query<&BrushMeshCache>,
     mut clip_state: ResMut<ClipState>,
     mut history: ResMut<CommandHistory>,
+    snap_settings: Res<crate::snapping::SnapSettings>,
+    mut commands: Commands,
     mut gizmos: Gizmos,
 ) {
     let EditMode::BrushEdit(BrushEditMode::Clip) = *edit_mode else {
         // Clear clip state when not in clip mode
-        if !clip_state.points.is_empty() {
+        if !clip_state.points.is_empty() || clip_state.mode != ClipMode::KeepFront {
             clip_state.points.clear();
             clip_state.preview_plane = None;
+            clip_state.mode = ClipMode::KeepFront;
         }
         return;
     };
@@ -1410,11 +1424,21 @@ pub(super) fn handle_clip_mode(
         return;
     };
 
-    // Escape clears clip points
+    // Escape clears clip points and resets mode
     if keyboard.just_pressed(KeyCode::Escape) {
         clip_state.points.clear();
         clip_state.preview_plane = None;
+        clip_state.mode = ClipMode::KeepFront;
         return;
+    }
+
+    // Tab cycles clip mode when preview plane exists
+    if keyboard.just_pressed(KeyCode::Tab) && clip_state.preview_plane.is_some() {
+        clip_state.mode = match clip_state.mode {
+            ClipMode::KeepFront => ClipMode::KeepBack,
+            ClipMode::KeepBack => ClipMode::Split,
+            ClipMode::Split => ClipMode::KeepFront,
+        };
     }
 
     // Left click: add point by raycasting to brush surface
@@ -1470,7 +1494,14 @@ pub(super) fn handle_clip_mode(
             }
         }
 
-        if let Some(point) = best_point {
+        if let Some(mut point) = best_point {
+            // Grid snap the clip point
+            let world_point = brush_global.transform_point(point);
+            let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+            let snapped = snap_settings.snap_translate_vec3_if(world_point, ctrl);
+            let (_, brush_rot, brush_trans) =
+                brush_global.to_scale_rotation_translation();
+            point = brush_rot.inverse() * (snapped - brush_trans);
             clip_state.points.push(point);
         }
     }
@@ -1505,14 +1536,13 @@ pub(super) fn handle_clip_mode(
         _ => None,
     };
 
-    // Enter: apply clip plane
+    // Enter: apply clip plane based on mode
     if keyboard.just_pressed(KeyCode::Enter) {
         if let Some(ref plane) = clip_state.preview_plane {
             let Ok(mut brush) = brushes.get_mut(brush_entity) else {
                 return;
             };
-            let old = brush.clone();
-            brush.faces.push(BrushFaceData {
+            let clip_face = BrushFaceData {
                 plane: plane.clone(),
                 material_index: 0,
                 texture_path: None,
@@ -1520,17 +1550,103 @@ pub(super) fn handle_clip_mode(
                 uv_offset: Vec2::ZERO,
                 uv_scale: Vec2::ONE,
                 uv_rotation: 0.0,
-            });
-            let cmd = SetBrush {
-                entity: brush_entity,
-                old,
-                new: brush.clone(),
-                label: "Clip brush".to_string(),
             };
-            history.undo_stack.push(Box::new(cmd));
-            history.redo_stack.clear();
+            let flipped_face = BrushFaceData {
+                plane: BrushPlane {
+                    normal: -plane.normal,
+                    distance: -plane.distance,
+                },
+                ..clip_face.clone()
+            };
+
+            match clip_state.mode {
+                ClipMode::KeepFront => {
+                    let old = brush.clone();
+                    brush.faces.push(clip_face);
+                    let cmd = SetBrush {
+                        entity: brush_entity,
+                        old,
+                        new: brush.clone(),
+                        label: "Clip brush (keep front)".to_string(),
+                    };
+                    history.undo_stack.push(Box::new(cmd));
+                    history.redo_stack.clear();
+                }
+                ClipMode::KeepBack => {
+                    let old = brush.clone();
+                    brush.faces.push(flipped_face);
+                    let cmd = SetBrush {
+                        entity: brush_entity,
+                        old,
+                        new: brush.clone(),
+                        label: "Clip brush (keep back)".to_string(),
+                    };
+                    history.undo_stack.push(Box::new(cmd));
+                    history.redo_stack.clear();
+                }
+                ClipMode::Split => {
+                    let old = brush.clone();
+                    // Front half: apply clip plane to original
+                    let mut front = old.clone();
+                    front.faces.push(clip_face);
+                    // Back half: apply flipped clip plane
+                    let mut back = old.clone();
+                    back.faces.push(flipped_face);
+
+                    // Update original entity to front half
+                    *brush = front.clone();
+                    let set_cmd = SetBrush {
+                        entity: brush_entity,
+                        old,
+                        new: front,
+                        label: "Clip brush (split - front)".to_string(),
+                    };
+
+                    // Spawn back half as new entity
+                    let back_brush = back;
+                    let (_, brush_rot, brush_trans) =
+                        brush_global.to_scale_rotation_translation();
+                    let spawn_transform = Transform {
+                        translation: brush_trans,
+                        rotation: brush_rot,
+                        scale: Vec3::ONE,
+                    };
+                    let back_owned = back_brush.clone();
+                    let transform_owned = spawn_transform;
+                    commands.queue(move |world: &mut World| {
+                        let entity = world
+                            .spawn((
+                                Name::new("Brush"),
+                                back_owned,
+                                transform_owned,
+                                Visibility::default(),
+                            ))
+                            .id();
+
+                        let snapshot = crate::commands::snapshot_entity(world, entity);
+                        let create_cmd = CreateBrushCommand {
+                            entity,
+                            scene_snapshot: snapshot,
+                        };
+
+                        let group = crate::commands::CommandGroup {
+                            commands: vec![Box::new(set_cmd), Box::new(create_cmd)],
+                            label: "Split brush".to_string(),
+                        };
+                        let mut history = world.resource_mut::<CommandHistory>();
+                        history.undo_stack.push(Box::new(group));
+                        history.redo_stack.clear();
+                    });
+                    clip_state.points.clear();
+                    clip_state.preview_plane = None;
+                    clip_state.mode = ClipMode::KeepFront;
+                    return;
+                }
+            }
+
             clip_state.points.clear();
             clip_state.preview_plane = None;
+            clip_state.mode = ClipMode::KeepFront;
         }
     }
 
@@ -1546,24 +1662,92 @@ pub(super) fn handle_clip_mode(
         }
     }
 
-    // Draw preview plane as a translucent quad
+    // Draw clipped geometry preview
     if let Some(ref plane) = clip_state.preview_plane {
-        let (_, brush_rot, _) = brush_global.to_scale_rotation_translation();
+        let Ok(brush_ref) = brushes.get(brush_entity) else {
+            return;
+        };
+        let (_, brush_rot, brush_trans) = brush_global.to_scale_rotation_translation();
         let world_normal = brush_rot * plane.normal;
         let center = brush_global.transform_point(plane.normal * plane.distance);
-        let (u, v) = compute_face_tangent_axes(plane.normal);
-        let world_u = brush_rot * u * 2.0;
-        let world_v = brush_rot * v * 2.0;
-        let preview_color = Color::srgba(1.0, 0.3, 0.3, 0.4);
-        // Draw a diamond shape
-        gizmos.line(center + world_u, center + world_v, preview_color);
-        gizmos.line(center + world_v, center - world_u, preview_color);
-        gizmos.line(center - world_u, center - world_v, preview_color);
-        gizmos.line(center - world_v, center + world_u, preview_color);
-        // Draw normal arrow
+
+        let world_faces = brush_planes_to_world(&brush_ref.faces, brush_rot, brush_trans);
+
+        // Transform clip plane to world space (same formula as brush_planes_to_world)
+        let world_clip_normal = (brush_rot * plane.normal).normalize();
+        let world_clip_distance = plane.distance + world_clip_normal.dot(brush_trans);
+
+        // Front half faces (brush + clip plane)
+        let front_clip = BrushFaceData {
+            plane: BrushPlane {
+                normal: world_clip_normal,
+                distance: world_clip_distance,
+            },
+            uv_scale: Vec2::ONE,
+            ..default()
+        };
+        let mut front_faces = world_faces.clone();
+        front_faces.push(front_clip);
+
+        // Back half faces (brush + flipped clip plane)
+        let back_clip = BrushFaceData {
+            plane: BrushPlane {
+                normal: -world_clip_normal,
+                distance: -world_clip_distance,
+            },
+            uv_scale: Vec2::ONE,
+            ..default()
+        };
+        let mut back_faces = world_faces;
+        back_faces.push(back_clip);
+
+        let (front_color, back_color) = match clip_state.mode {
+            ClipMode::KeepFront => (
+                Color::srgba(0.3, 1.0, 0.5, 0.8),
+                Color::srgba(1.0, 0.2, 0.2, 0.4),
+            ),
+            ClipMode::KeepBack => (
+                Color::srgba(1.0, 0.2, 0.2, 0.4),
+                Color::srgba(0.3, 1.0, 0.5, 0.8),
+            ),
+            ClipMode::Split => (
+                Color::srgba(0.3, 1.0, 0.5, 0.8),
+                Color::srgba(0.3, 0.5, 1.0, 0.8),
+            ),
+        };
+
+        // Draw front half wireframe
+        let (verts, polys) = compute_brush_geometry(&front_faces);
+        if verts.len() >= 4 {
+            for polygon in &polys {
+                for i in 0..polygon.len() {
+                    let a = verts[polygon[i]];
+                    let b = verts[polygon[(i + 1) % polygon.len()]];
+                    gizmos.line(a, b, front_color);
+                }
+            }
+        }
+
+        // Draw back half wireframe
+        let (verts, polys) = compute_brush_geometry(&back_faces);
+        if verts.len() >= 4 {
+            for polygon in &polys {
+                for i in 0..polygon.len() {
+                    let a = verts[polygon[i]];
+                    let b = verts[polygon[(i + 1) % polygon.len()]];
+                    gizmos.line(a, b, back_color);
+                }
+            }
+        }
+
+        // Draw normal arrow (direction reflects mode)
+        let arrow_dir = match clip_state.mode {
+            ClipMode::KeepBack => -world_normal,
+            _ => world_normal,
+        };
         gizmos.arrow(
             center,
-            center + world_normal * 0.5,
+            center + arrow_dir * 0.5,
             Color::srgb(1.0, 0.3, 0.3),
         );
     }

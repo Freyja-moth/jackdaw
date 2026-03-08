@@ -11,6 +11,10 @@ use jackdaw_camera::{JackdawCameraPlugin, JackdawCameraSettings};
 use crate::selection::{Selected, Selection};
 use jackdaw_widgets::file_browser::FileBrowserItem;
 
+/// Marker for the main 3D viewport camera (layer 0).
+#[derive(Component)]
+pub struct MainViewportCamera;
+
 const DEFAULT_VIEWPORT_WIDTH: u32 = 1280;
 const DEFAULT_VIEWPORT_HEIGHT: u32 = 720;
 
@@ -62,6 +66,7 @@ fn setup_viewport(
     // Spawn 3D camera (marked EditorEntity so it's hidden from hierarchy and undeletable)
     let camera = commands
         .spawn((
+            MainViewportCamera,
             crate::EditorEntity,
             Camera3d::default(),
             Camera {
@@ -93,7 +98,7 @@ fn handle_viewport_drop(
     file_items: Query<&FileBrowserItem>,
     parents: Query<&ChildOf>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<crate::EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     snap_settings: Res<crate::snapping::SnapSettings>,
     mut commands: Commands,
@@ -310,3 +315,4 @@ fn handle_camera_keys(
         }
     }
 }
+

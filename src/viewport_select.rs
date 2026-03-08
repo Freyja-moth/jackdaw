@@ -3,7 +3,7 @@ use crate::{
     gizmos::GizmoDragState,
     modal_transform::{ModalTransformState, ViewportDragState},
     selection::Selection,
-    viewport::SceneViewport,
+    viewport::{MainViewportCamera, SceneViewport},
 };
 use bevy::input_focus::InputFocus;
 use bevy::{
@@ -34,7 +34,7 @@ fn handle_viewport_click(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
     parents: Query<&ChildOf>,
@@ -158,7 +158,7 @@ fn handle_box_select(
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
     mut box_state: ResMut<BoxSelectState>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, With<EditorEntity>)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     gizmo_drag: Res<GizmoDragState>,
     edit_mode: Res<crate::brush::EditMode>,

@@ -13,7 +13,6 @@ pub mod inspector;
 pub use inspector::{EditorMeta, ReflectEditorMeta};
 pub mod layout;
 pub mod material_browser;
-pub mod material_definition;
 pub mod material_preview;
 pub mod modal_transform;
 pub mod navmesh;
@@ -65,6 +64,12 @@ pub struct BlocksCameraInput;
 /// Users can remove it to make hidden entities visible, or add it to hide their own.
 #[derive(Component, Default)]
 pub struct EditorHidden;
+
+/// Marker component for entities that should not be included in scene serialization.
+/// Add this to runtime-generated child entities (brush face meshes, terrain chunks, etc.)
+/// that are rebuilt automatically from their parent's component data.
+#[derive(Component, Default)]
+pub struct NonSerializable;
 
 pub struct EditorPlugin;
 

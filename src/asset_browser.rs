@@ -16,11 +16,25 @@ use rfd::AsyncFileDialog;
 
 use crate::{
     EditorEntity,
-    brush::{Brush, BrushEditMode, BrushSelection, EditMode, LastUsedTexture, SetBrush},
+    brush::{Brush, BrushEditMode, BrushSelection, EditMode, LastUsedMaterial, SetBrush},
     commands::CommandHistory,
-    material_definition::is_ktx2_non_2d,
     selection::Selection,
 };
+
+/// Returns true if the KTX2 file is NOT a simple 2D texture (cubemap or array texture).
+fn is_ktx2_non_2d(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    use std::io::Read;
+    let mut header = [0u8; 40];
+    if file.read_exact(&mut header).is_err() {
+        return false;
+    }
+    let layer_count = u32::from_le_bytes([header[32], header[33], header[34], header[35]]);
+    let face_count = u32::from_le_bytes([header[36], header[37], header[38], header[39]]);
+    layer_count > 1 || face_count > 1
+}
 
 pub struct AssetBrowserPlugin;
 
@@ -50,7 +64,7 @@ impl Plugin for AssetBrowserPlugin {
 
 // ── Events (absorbed from texture_browser) ──────────────────────────────────
 
-/// Apply a texture to currently selected brush faces.
+/// Apply a texture to currently selected brush faces (creates a StandardMaterial from path).
 #[derive(Event, Debug, Clone)]
 pub struct ApplyTextureToFaces {
     pub path: String,
@@ -634,15 +648,24 @@ fn handle_apply_texture(
     selection: Res<Selection>,
     mut brushes: Query<&mut Brush>,
     mut history: ResMut<CommandHistory>,
-    mut last_texture: ResMut<LastUsedTexture>,
+    mut last_material: ResMut<LastUsedMaterial>,
+    asset_server: Res<AssetServer>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Create a StandardMaterial from the texture path
+    let image: Handle<Image> = asset_server.load(event.path.clone());
+    let material = materials.add(StandardMaterial {
+        base_color_texture: Some(image),
+        ..default()
+    });
+
     if *edit_mode == EditMode::BrushEdit(BrushEditMode::Face) && !brush_selection.faces.is_empty() {
         if let Some(entity) = brush_selection.entity {
             if let Ok(mut brush) = brushes.get_mut(entity) {
                 let old = brush.clone();
                 for &face_idx in &brush_selection.faces {
                     if face_idx < brush.faces.len() {
-                        brush.faces[face_idx].texture_path = Some(event.path.clone());
+                        brush.faces[face_idx].material = material.clone();
                     }
                 }
                 let cmd = SetBrush {
@@ -660,7 +683,7 @@ fn handle_apply_texture(
             if let Ok(mut brush) = brushes.get_mut(entity) {
                 let old = brush.clone();
                 for face in brush.faces.iter_mut() {
-                    face.texture_path = Some(event.path.clone());
+                    face.material = material.clone();
                 }
                 let cmd = SetBrush {
                     entity,
@@ -674,7 +697,7 @@ fn handle_apply_texture(
         }
     }
 
-    last_texture.texture_path = Some(event.path.clone());
+    last_material.material = Some(material);
 }
 
 fn handle_select_asset_preview(

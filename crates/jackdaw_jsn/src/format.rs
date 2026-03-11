@@ -108,7 +108,7 @@ pub struct JsnHeader {
 impl Default for JsnHeader {
     fn default() -> Self {
         Self {
-            format_version: [1, 0, 0],
+            format_version: [2, 0, 0],
             editor_version: env!("CARGO_PKG_VERSION").to_string(),
             bevy_version: "0.18".to_string(),
         }
@@ -129,24 +129,19 @@ pub struct JsnMetadata {
     pub modified: String,
 }
 
-/// Asset manifest — lists files referenced by the scene.
+/// Generic asset table — keyed by type path, then by asset name.
+///
+/// JSON example:
+/// ```json
+/// "assets": {
+///   "bevy_pbr::StandardMaterial": {
+///     "BrickWall": { "base_color": ... },
+///     "Metal": { "metallic": 1.0 }
+///   }
+/// }
+/// ```
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct JsnAssets {
-    #[serde(default)]
-    pub textures: Vec<String>,
-    #[serde(default)]
-    pub models: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub material_definitions: Vec<serde_json::Value>,
-}
-
-fn default_base_color() -> [f32; 4] {
-    [1.0, 1.0, 1.0, 1.0]
-}
-
-fn default_half() -> f32 {
-    0.5
-}
+pub struct JsnAssets(pub HashMap<String, HashMap<String, serde_json::Value>>);
 
 /// Reserved for editor-specific state. Currently unused.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

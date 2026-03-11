@@ -6,10 +6,9 @@ use std::fmt::{self, Formatter};
 use std::path::{Path, PathBuf};
 use std::result::Result;
 
-use bevy::asset::{LoadedUntypedAsset, ReflectHandle};
+use bevy::asset::{ReflectAsset, ReflectHandle, UntypedAssetId};
 use bevy::reflect::serde::{
-    ReflectDeserializer, ReflectDeserializerProcessor, ReflectSerializer,
-    ReflectSerializerProcessor,
+    ReflectDeserializerProcessor, ReflectSerializerProcessor,
 };
 use bevy::reflect::{TypeRegistration, TypeRegistry};
 use bevy::{
@@ -23,9 +22,11 @@ use bevy::{
 use jackdaw_jsn::format::{JsnAssets, JsnEntity, JsnHeader, JsnMetadata, JsnScene};
 use rfd::{AsyncFileDialog, FileHandle};
 use serde::de::{DeserializeSeed, Visitor};
-use serde::{Deserializer, Serialize, Serializer};
+use serde::{Deserializer, Serializer};
 
-use crate::{EditorEntity, EditorHidden};
+use crate::brush::BrushMaterialPalette;
+use crate::{EditorEntity, EditorHidden, NonSerializable};
+use jackdaw_jsn::Brush;
 
 /// Component type path prefixes that should never be saved (runtime-only / internal).
 const SKIP_COMPONENT_PREFIXES: &[&str] = &[
@@ -149,10 +150,40 @@ pub fn save_scene_as(world: &mut World) {
 }
 
 fn save_scene_inner(world: &mut World) {
-    let entities = build_scene_snapshot(world);
+    let scene_file_path = world.resource::<SceneFilePath>();
+    let parent_path: Cow<'_, Path> = match scene_file_path
+        .path
+        .as_ref()
+        .and_then(|p| Path::new(p).parent())
+    {
+        Some(parent_path) => Cow::Owned(parent_path.to_path_buf()),
+        None => Cow::Owned(env::current_dir().expect("Couldn't access the current directory")),
+    };
 
-    // Build asset manifest by scanning brush textures and GLTF sources
-    let assets = build_asset_manifest(world);
+    // Pre-compute entity lists while we have &mut World
+    let editor_set = collect_editor_entities(world);
+    let scene_entities = collect_scene_entities_from_set(world, &editor_set);
+
+    // Resolve default brush face materials to the palette material so they serialize as inline assets
+    let default_faces = resolve_default_brush_materials(world, &scene_entities);
+
+    let registry = world.resource::<AppTypeRegistry>().clone();
+    let registry_guard = registry.read();
+
+    // --- Phase 1: Collect inline assets from all scene entity components ---
+    let (inline_assets, inline_asset_data) =
+        collect_inline_assets(world, &registry_guard, &parent_path, &scene_entities);
+
+    // --- Phase 2: Build entity list and serialize ---
+    let entities = build_scene_snapshot(world, &registry_guard, &parent_path, &inline_assets, &scene_entities);
+
+    // --- Phase 3: Serialize inline asset data into JsnAssets ---
+    let assets = JsnAssets(inline_asset_data);
+
+    drop(registry_guard);
+
+    // Restore Handle::default() on faces that were temporarily resolved
+    restore_default_brush_materials(world, &default_faces);
 
     // Build metadata
     let now = chrono_now();
@@ -213,46 +244,197 @@ pub fn load_scene(world: &mut World) {
     spawn_open_dialog(world);
 }
 
-struct JsnDeserializerProcessor<'a> {
-    asset_server: &'a AssetServer,
-    parent_path: &'a Path,
+// ─────────────────────────────────── Serializer Processor ───────────────────────────────────
+
+struct JsnSerializerProcessor<'a> {
+    parent_path: Cow<'a, Path>,
+    /// Maps runtime asset IDs (no path) to inline `#Name` references.
+    inline_assets: &'a HashMap<UntypedAssetId, String>,
+    /// Maps scene entities to their index in the entity array.
+    entity_to_index: &'a HashMap<Entity, usize>,
+}
+
+impl<'a> ReflectSerializerProcessor for JsnSerializerProcessor<'a> {
+    fn try_serialize<S>(
+        &self,
+        value: &dyn PartialReflect,
+        registry: &TypeRegistry,
+        serializer: S,
+    ) -> Result<Result<S::Ok, S>, S::Error>
+    where
+        S: Serializer,
+    {
+        let Some(value) = value.try_as_reflect() else {
+            return Ok(Err(serializer));
+        };
+        let type_id = value.reflect_type_info().type_id();
+
+        // Non-finite floats: JSON has no infinity/NaN, serialize as descriptive strings
+        if type_id == TypeId::of::<f32>() {
+            if let Some(&v) = value.as_any().downcast_ref::<f32>() {
+                if !v.is_finite() {
+                    let s = if v == f32::INFINITY {
+                        "inf"
+                    } else if v == f32::NEG_INFINITY {
+                        "-inf"
+                    } else {
+                        "NaN"
+                    };
+                    return Ok(Ok(serializer.serialize_str(s)?));
+                }
+            }
+        }
+        if type_id == TypeId::of::<f64>() {
+            if let Some(&v) = value.as_any().downcast_ref::<f64>() {
+                if !v.is_finite() {
+                    let s = if v == f64::INFINITY {
+                        "inf"
+                    } else if v == f64::NEG_INFINITY {
+                        "-inf"
+                    } else {
+                        "NaN"
+                    };
+                    return Ok(Ok(serializer.serialize_str(s)?));
+                }
+            }
+        }
+
+        // Handle<T> → path string or inline #Name
+        if let Some(reflect_handle) = registry.get_type_data::<ReflectHandle>(type_id) {
+            let untyped_handle = reflect_handle
+                .downcast_handle_untyped(value.as_any())
+                .expect("This must have been a handle");
+
+            if let Some(path) = untyped_handle.path() {
+                // External asset — serialize as relative path
+                let rel = pathdiff::diff_paths(path.path(), &self.parent_path)
+                    .unwrap_or_else(|| path.path().to_owned());
+                let mut path_str = rel.to_string_lossy().into_owned();
+                // Preserve label (e.g. #Scene0) if present
+                if let Some(label) = path.label() {
+                    path_str.push('#');
+                    path_str.push_str(label);
+                }
+                return Ok(Ok(serializer.serialize_str(&path_str)?));
+            }
+
+            if let Some(inline_name) = self.inline_assets.get(&untyped_handle.id()) {
+                // Inline asset — serialize as #Name reference
+                return Ok(Ok(serializer.serialize_str(inline_name)?));
+            }
+
+            // Unknown handle (no path, not inline) — serialize as null
+            return Ok(Ok(serializer.serialize_unit()?));
+        }
+
+        // Entity → scene-local index
+        if type_id == TypeId::of::<Entity>() {
+            if let Some(entity) = value.as_any().downcast_ref::<Entity>() {
+                if let Some(&idx) = self.entity_to_index.get(entity) {
+                    return Ok(Ok(serializer.serialize_u64(idx as u64)?));
+                }
+            }
+            return Ok(Ok(serializer.serialize_unit()?));
+        }
+
+        Ok(Err(serializer))
+    }
+}
+
+// ─────────────────────────────────── Deserializer Processor ───────────────────────────────────
+
+pub(crate) struct JsnDeserializerProcessor<'a> {
+    pub(crate) asset_server: &'a AssetServer,
+    pub(crate) parent_path: &'a Path,
+    /// Maps inline `#Name` references to loaded handles.
+    pub(crate) local_assets: &'a HashMap<String, UntypedHandle>,
+    /// Maps scene-local indices to spawned entities.
+    pub(crate) entity_map: &'a [Entity],
 }
 
 impl<'a> ReflectDeserializerProcessor for JsnDeserializerProcessor<'a> {
     fn try_deserialize<'de, D>(
         &mut self,
         registration: &TypeRegistration,
-        _: &TypeRegistry,
+        _registry: &TypeRegistry,
         deserializer: D,
     ) -> Result<Result<Box<dyn PartialReflect>, D>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        if registration.data::<ReflectHandle>().is_none() {
-            // This isn't a handle; just deserialize it the usual way.
-            return Ok(Err(deserializer));
-        };
-        let type_info = registration.type_info();
+        // Non-finite floats: deserialize from string ("inf", "-inf", "NaN") or number
+        if registration.type_id() == TypeId::of::<f32>() {
+            let val = deserializer
+                .deserialize_any(F32Visitor)
+                .map_err(|e| <D::Error as serde::de::Error>::custom(e))?;
+            return Ok(Ok(Box::new(val).into_partial_reflect()));
+        }
+        if registration.type_id() == TypeId::of::<f64>() {
+            let val = deserializer
+                .deserialize_any(F64Visitor)
+                .map_err(|e| <D::Error as serde::de::Error>::custom(e))?;
+            return Ok(Ok(Box::new(val).into_partial_reflect()));
+        }
 
-        let relative_path = match deserializer.deserialize_str(&*self) {
-            Ok(path) => path,
-            Err(error) => {
-                error!(
-                    "Failed to deserialize `{}`: {:?}",
-                    type_info.type_path(),
-                    error
-                );
-                return Err(error);
+        // Handle<T> — deserialize from path string or #Name
+        if registration.data::<ReflectHandle>().is_some() {
+            let type_info = registration.type_info();
+
+            let relative_path = match deserializer.deserialize_any(&*self) {
+                Ok(path) => path,
+                Err(error) => {
+                    error!(
+                        "Failed to deserialize `{}`: {:?}",
+                        type_info.type_path(),
+                        error
+                    );
+                    return Err(error);
+                }
+            };
+
+            // Null sentinel (from old files with "material": null) → default handle
+            if relative_path.is_empty() {
+                if let Some(reflect_default) = registration.data::<ReflectDefault>() {
+                    return Ok(Ok(reflect_default.default().into_partial_reflect()));
+                }
             }
-        };
 
-        let stem_pos = relative_path.find('#').unwrap_or(relative_path.len());
-        let stem = self.relative_path_to_asset_path(&relative_path[0..stem_pos]);
-        let mut asset_path = stem.to_string_lossy().into_owned();
-        asset_path.push_str(&relative_path[stem_pos..]);
+            // Check for inline asset reference
+            if let Some(handle) = self.local_assets.get(&relative_path) {
+                return Ok(Ok(Box::new(handle.clone()).into_partial_reflect()));
+            }
 
-        let handle: Handle<LoadedUntypedAsset> = self.asset_server.load_untyped(asset_path);
-        Ok(Ok(Box::new(handle).into_partial_reflect()))
+            // External asset path
+            let stem_pos = relative_path.find('#').unwrap_or(relative_path.len());
+            let stem = self.relative_path_to_asset_path(&relative_path[0..stem_pos]);
+            let mut asset_path = stem.to_string_lossy().into_owned();
+            asset_path.push_str(&relative_path[stem_pos..]);
+
+            let handle = self.asset_server.load_untyped(asset_path);
+            return Ok(Ok(Box::new(handle).into_partial_reflect()));
+        }
+
+        // Entity — deserialize from scene-local index
+        if registration.type_id() == TypeId::of::<Entity>() {
+            let idx_str = match deserializer.deserialize_u64(&*self) {
+                Ok(s) => s,
+                Err(_) => {
+                    // Not a valid index, return placeholder
+                    return Ok(Ok(
+                        Box::new(Entity::PLACEHOLDER).into_partial_reflect()
+                    ));
+                }
+            };
+            let idx: usize = idx_str.parse().unwrap_or(usize::MAX);
+            let entity = self
+                .entity_map
+                .get(idx)
+                .copied()
+                .unwrap_or(Entity::PLACEHOLDER);
+            return Ok(Ok(Box::new(entity).into_partial_reflect()));
+        }
+
+        Ok(Err(deserializer))
     }
 }
 
@@ -260,7 +442,14 @@ impl<'a> Visitor<'_> for &'a JsnDeserializerProcessor<'a> {
     type Value = String;
 
     fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
-        write!(formatter, "a string")
+        write!(formatter, "a string, integer, or null")
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(String::new())
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -268,6 +457,85 @@ impl<'a> Visitor<'_> for &'a JsnDeserializerProcessor<'a> {
         E: serde::de::Error,
     {
         Ok(v.to_owned())
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(v.to_string())
+    }
+}
+
+// ─────────────────────────────── Float Visitors (inf/NaN round-trip) ────────────────────────────
+
+struct F32Visitor;
+
+impl Visitor<'_> for F32Visitor {
+    type Value = f32;
+
+    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+        write!(formatter, "a number or float string (inf, -inf, NaN)")
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
+        Ok(v as f32)
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+        Ok(v as f32)
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+        Ok(v as f32)
+    }
+
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+        match v {
+            "inf" | "Infinity" => Ok(f32::INFINITY),
+            "-inf" | "-Infinity" => Ok(f32::NEG_INFINITY),
+            "NaN" | "nan" => Ok(f32::NAN),
+            _ => Err(E::custom(format!("unexpected float string: {v}"))),
+        }
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+        Ok(0.0) // backward compat: old files with null
+    }
+}
+
+struct F64Visitor;
+
+impl Visitor<'_> for F64Visitor {
+    type Value = f64;
+
+    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+        write!(formatter, "a number or float string (inf, -inf, NaN)")
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
+        Ok(v)
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+        Ok(v as f64)
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+        Ok(v as f64)
+    }
+
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+        match v {
+            "inf" | "Infinity" => Ok(f64::INFINITY),
+            "-inf" | "-Infinity" => Ok(f64::NEG_INFINITY),
+            "NaN" | "nan" => Ok(f64::NAN),
+            _ => Err(E::custom(format!("unexpected float string: {v}"))),
+        }
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+        Ok(0.0) // backward compat: old files with null
     }
 }
 
@@ -280,6 +548,363 @@ impl<'a> JsnDeserializerProcessor<'a> {
         asset_path
     }
 }
+
+// ─────────────────────────────────── Inline Asset Collection ───────────────────────────────────
+
+/// Walk all scene entity components, find `Handle<T>` fields that have no asset path
+/// (runtime-created), serialize them into the generic assets table, and return a map
+/// of asset ID → inline name for the serializer processor.
+fn collect_inline_assets(
+    world: &World,
+    registry: &TypeRegistry,
+    parent_path: &Path,
+    scene_entities: &[Entity],
+) -> (
+    HashMap<UntypedAssetId, String>,
+    HashMap<String, HashMap<String, serde_json::Value>>,
+) {
+    let mut id_to_name: HashMap<UntypedAssetId, String> = HashMap::new();
+    let mut asset_data: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
+    let mut counters: HashMap<String, usize> = HashMap::new();
+
+    // Scan all scene entities' components for Handle<T> values,
+    // collect the ones without paths, serialize the underlying asset data.
+    let skip_ids: HashSet<TypeId> = HashSet::from([
+        TypeId::of::<Name>(),
+        TypeId::of::<Transform>(),
+        TypeId::of::<GlobalTransform>(),
+        TypeId::of::<Visibility>(),
+        TypeId::of::<InheritedVisibility>(),
+        TypeId::of::<ViewVisibility>(),
+        TypeId::of::<ChildOf>(),
+        TypeId::of::<Children>(),
+    ]);
+
+    for &entity in scene_entities {
+        let entity_ref = world.entity(entity);
+
+        for registration in registry.iter() {
+            if skip_ids.contains(&registration.type_id()) {
+                continue;
+            }
+            let type_path = registration.type_info().type_path_table().path();
+            if should_skip_component(type_path) {
+                continue;
+            }
+            let Some(reflect_component) = registration.data::<ReflectComponent>() else {
+                continue;
+            };
+            let Some(component) = reflect_component.reflect(entity_ref) else {
+                continue;
+            };
+
+            // Walk the reflected value looking for Handle<T> fields
+            collect_handles_from_reflect(
+                component.as_partial_reflect(),
+                registry,
+                world,
+                parent_path,
+                &mut id_to_name,
+                &mut asset_data,
+                &mut counters,
+            );
+        }
+    }
+
+    (id_to_name, asset_data)
+}
+
+/// Recursively walk a reflected value looking for Handle<T> fields that are runtime-created.
+fn collect_handles_from_reflect(
+    value: &dyn PartialReflect,
+    registry: &TypeRegistry,
+    world: &World,
+    parent_path: &Path,
+    id_to_name: &mut HashMap<UntypedAssetId, String>,
+    asset_data: &mut HashMap<String, HashMap<String, serde_json::Value>>,
+    counters: &mut HashMap<String, usize>,
+) {
+    let Some(value) = value.try_as_reflect() else {
+        return;
+    };
+    let type_id = value.reflect_type_info().type_id();
+
+    // Check if this is a Handle<T>
+    if let Some(reflect_handle) = registry.get_type_data::<ReflectHandle>(type_id) {
+        let untyped_handle = reflect_handle
+            .downcast_handle_untyped(value.as_any())
+            .expect("This must have been a handle");
+
+        // Skip if it has a path (external asset) or already collected
+        if untyped_handle.path().is_some() || id_to_name.contains_key(&untyped_handle.id()) {
+            return;
+        }
+
+        // Skip default/UUID handles (not backed by a live asset)
+        if matches!(untyped_handle, UntypedHandle::Uuid { .. }) {
+            return;
+        }
+
+        let asset_type_id = reflect_handle.asset_type_id();
+        let Some(asset_registration) = registry.get(asset_type_id) else {
+            return;
+        };
+        let Some(reflect_asset) = asset_registration.data::<ReflectAsset>() else {
+            return;
+        };
+
+        let asset_type_path = asset_registration
+            .type_info()
+            .type_path_table()
+            .path()
+            .to_string();
+
+        // Get the asset data and serialize it
+        let Some(asset_reflect) = reflect_asset.get(world, untyped_handle.id()) else {
+            return;
+        };
+
+        // Generate a name like "Material0", "Material1"
+        let counter = counters.entry(asset_type_path.clone()).or_insert(0);
+        let short_name = asset_type_path
+            .rsplit("::")
+            .next()
+            .unwrap_or(&asset_type_path);
+        let inline_name = format!("#{short_name}{counter}");
+        *counter += 1;
+
+        // Serialize the asset using the processor (for nested handles like textures inside materials)
+        let ser_processor = JsnSerializerProcessor {
+            parent_path: Cow::Borrowed(parent_path),
+            inline_assets: id_to_name, // partial map, but handles already collected will be there
+            entity_to_index: &HashMap::new(),
+        };
+        let serializer =
+            TypedReflectSerializer::with_processor(asset_reflect, registry, &ser_processor);
+        if let Ok(json_value) = serde_json::to_value(&serializer) {
+            id_to_name.insert(untyped_handle.id(), inline_name.clone());
+            asset_data
+                .entry(asset_type_path)
+                .or_default()
+                .insert(inline_name, json_value);
+        }
+
+        return;
+    }
+
+    // Recurse into struct/tuple/list/map fields
+    match value.reflect_ref() {
+        bevy::reflect::ReflectRef::Struct(s) => {
+            for i in 0..s.field_len() {
+                if let Some(field) = s.field_at(i) {
+                    collect_handles_from_reflect(
+                        field,
+                        registry,
+                        world,
+                        parent_path,
+                        id_to_name,
+                        asset_data,
+                        counters,
+                    );
+                }
+            }
+        }
+        bevy::reflect::ReflectRef::TupleStruct(ts) => {
+            for i in 0..ts.field_len() {
+                if let Some(field) = ts.field(i) {
+                    collect_handles_from_reflect(
+                        field,
+                        registry,
+                        world,
+                        parent_path,
+                        id_to_name,
+                        asset_data,
+                        counters,
+                    );
+                }
+            }
+        }
+        bevy::reflect::ReflectRef::Tuple(t) => {
+            for i in 0..t.field_len() {
+                if let Some(field) = t.field(i) {
+                    collect_handles_from_reflect(
+                        field,
+                        registry,
+                        world,
+                        parent_path,
+                        id_to_name,
+                        asset_data,
+                        counters,
+                    );
+                }
+            }
+        }
+        bevy::reflect::ReflectRef::List(l) => {
+            for i in 0..l.len() {
+                if let Some(item) = l.get(i) {
+                    collect_handles_from_reflect(
+                        item,
+                        registry,
+                        world,
+                        parent_path,
+                        id_to_name,
+                        asset_data,
+                        counters,
+                    );
+                }
+            }
+        }
+        bevy::reflect::ReflectRef::Array(a) => {
+            for i in 0..a.len() {
+                if let Some(item) = a.get(i) {
+                    collect_handles_from_reflect(
+                        item,
+                        registry,
+                        world,
+                        parent_path,
+                        id_to_name,
+                        asset_data,
+                        counters,
+                    );
+                }
+            }
+        }
+        bevy::reflect::ReflectRef::Map(m) => {
+            for (_k, v) in m.iter() {
+                collect_handles_from_reflect(
+                    v,
+                    registry,
+                    world,
+                    parent_path,
+                    id_to_name,
+                    asset_data,
+                    counters,
+                );
+            }
+        }
+        bevy::reflect::ReflectRef::Set(s) => {
+            for item in s.iter() {
+                collect_handles_from_reflect(
+                    item,
+                    registry,
+                    world,
+                    parent_path,
+                    id_to_name,
+                    asset_data,
+                    counters,
+                );
+            }
+        }
+        bevy::reflect::ReflectRef::Enum(e) => {
+            for i in 0..e.field_len() {
+                if let Some(field) = e.field_at(i) {
+                    collect_handles_from_reflect(
+                        field,
+                        registry,
+                        world,
+                        parent_path,
+                        id_to_name,
+                        asset_data,
+                        counters,
+                    );
+                }
+            }
+        }
+        bevy::reflect::ReflectRef::Opaque(_) => {}
+    }
+}
+
+// ─────────────────────────────────── Save (Snapshot) ───────────────────────────────────
+
+/// Build a `Vec<JsnEntity>` from scene entities using reflection.
+/// Uses the serializer processor to handle `Handle<T>` and `Entity` fields.
+fn build_scene_snapshot(
+    world: &World,
+    registry: &TypeRegistry,
+    parent_path: &Path,
+    inline_assets: &HashMap<UntypedAssetId, String>,
+    entities: &[Entity],
+) -> Vec<JsnEntity> {
+
+    // Build entity → index map for parent and entity-field references
+    let entity_to_index: HashMap<Entity, usize> =
+        entities.iter().enumerate().map(|(i, &e)| (e, i)).collect();
+
+    let ser_processor = JsnSerializerProcessor {
+        parent_path: Cow::Borrowed(parent_path),
+        inline_assets,
+        entity_to_index: &entity_to_index,
+    };
+
+    // Component types handled as explicit fields — skip in the generic loop
+    let skip_ids: HashSet<TypeId> = HashSet::from([
+        TypeId::of::<Name>(),
+        TypeId::of::<Transform>(),
+        TypeId::of::<GlobalTransform>(),
+        TypeId::of::<Visibility>(),
+        TypeId::of::<InheritedVisibility>(),
+        TypeId::of::<ViewVisibility>(),
+        TypeId::of::<ChildOf>(),
+        TypeId::of::<Children>(),
+    ]);
+
+    entities
+        .iter()
+        .map(|&entity| {
+            let entity_ref = world.entity(entity);
+
+            // Core fields
+            let name = entity_ref.get::<Name>().map(|n| n.to_string());
+            let transform = entity_ref.get::<Transform>().map(|t| (*t).into());
+            let visibility = entity_ref
+                .get::<Visibility>()
+                .map(|v| (*v).into())
+                .unwrap_or_default();
+            let parent = entity_ref
+                .get::<ChildOf>()
+                .and_then(|c| entity_to_index.get(&c.parent()).copied());
+
+            // Extensible components via reflection — now with processor
+            let mut components = HashMap::new();
+
+            for registration in registry.iter() {
+                if skip_ids.contains(&registration.type_id()) {
+                    continue;
+                }
+
+                let type_path = registration.type_info().type_path_table().path();
+
+                if should_skip_component(type_path) {
+                    continue;
+                }
+
+                let Some(reflect_component) = registration.data::<ReflectComponent>() else {
+                    continue;
+                };
+                let Some(component) = reflect_component.reflect(entity_ref) else {
+                    continue;
+                };
+
+                // Serialize with processor — handles Handle<T> → path and Entity → index
+                let serializer =
+                    TypedReflectSerializer::with_processor(component, registry, &ser_processor);
+                if let Ok(value) = serde_json::to_value(&serializer) {
+                    components.insert(type_path.to_string(), value);
+                }
+            }
+
+            JsnEntity {
+                name,
+                transform,
+                visibility,
+                parent,
+                components,
+            }
+        })
+        .collect()
+}
+
+// ─────────────────────────────────── Load ───────────────────────────────────
 
 fn finish_load_scene(world: &mut World, chosen: &std::path::Path) {
     let path = chosen.to_string_lossy().to_string();
@@ -321,7 +946,7 @@ fn finish_load_scene(world: &mut World, chosen: &std::path::Path) {
             Err(err) => warn!("Failed to write scene to world: {err}"),
         }
     } else {
-        // JSN format
+        // JSN v2 format
         let jsn: JsnScene = match serde_json::from_str(&json) {
             Ok(jsn) => jsn,
             Err(err) => {
@@ -330,11 +955,24 @@ fn finish_load_scene(world: &mut World, chosen: &std::path::Path) {
             }
         };
 
-        clear_scene_entities(world);
-        load_scene_from_jsn(world, &jsn.scene);
+        // Check format version
+        if jsn.jsn.format_version[0] < 2 {
+            warn!(
+                "JSN format version {:?} is not supported. Please re-save with the latest editor.",
+                jsn.jsn.format_version
+            );
+            return;
+        }
 
-        // Merge embedded material definitions into the library
-        merge_material_definitions(world, &jsn.assets.material_definitions);
+        clear_scene_entities(world);
+
+        let parent_path = Path::new(&path).parent().unwrap_or(Path::new("."));
+
+        // Deserialize inline assets before entities
+        let local_assets = load_inline_assets(world, &jsn.assets, parent_path);
+
+        // Load entities with processor
+        load_scene_from_jsn(world, &jsn.scene, parent_path, &local_assets);
 
         info!("Scene loaded from {path}");
 
@@ -346,125 +984,63 @@ fn finish_load_scene(world: &mut World, chosen: &std::path::Path) {
     world.resource_mut::<SceneFilePath>().path = Some(path);
 }
 
-pub fn new_scene(world: &mut World) {
-    clear_scene_entities(world);
-    let mut scene_path = world.resource_mut::<SceneFilePath>();
-    scene_path.path = None;
-    scene_path.metadata = JsnMetadata::default();
-    info!("New scene created");
-}
+/// Deserialize inline assets from the generic assets table.
+/// Returns a map of `#Name` → `UntypedHandle` for the deserializer processor.
+pub fn load_inline_assets(
+    world: &mut World,
+    assets: &JsnAssets,
+    parent_path: &Path,
+) -> HashMap<String, UntypedHandle> {
+    let mut local_assets: HashMap<String, UntypedHandle> = HashMap::new();
 
-/// Build a `Vec<JsnEntity>` from scene entities (named + descendants) using reflection.
-///
-/// Only saves entities that have a `Name` component (excluding editor entities)
-/// plus all their descendants. This naturally excludes Bevy internal entities,
-/// monitors, windows, pointers, etc.
-fn build_scene_snapshot(world: &mut World) -> Vec<JsnEntity> {
-    let editor_set = collect_editor_entities(world);
+    let registry = world.resource::<AppTypeRegistry>().clone();
+    let registry_guard = registry.read();
+    let asset_server = world.resource::<AssetServer>().clone();
 
-    // Collect named non-editor entities as roots
-    let roots: Vec<Entity> = world
-        .query_filtered::<Entity, With<Name>>()
-        .iter(world)
-        .filter(|e| !editor_set.contains(e))
-        .collect();
-
-    // Expand to include all descendants
-    let mut scene_set = HashSet::new();
-    let mut stack = roots;
-    while let Some(entity) = stack.pop() {
-        if !scene_set.insert(entity) {
+    for (type_path, named_entries) in &assets.0 {
+        let Some(registration) = registry_guard.get_with_type_path(type_path) else {
+            warn!("Unknown asset type '{type_path}' in inline assets — skipping");
             continue;
-        }
-        if let Some(children) = world.get::<Children>(entity) {
-            for child in children.iter() {
-                // Skip editor-hidden children (cascade shadows, etc.)
-                if world.get::<EditorHidden>(child).is_none() {
-                    stack.push(child);
-                }
-            }
+        };
+        let Some(reflect_asset) = registration.data::<ReflectAsset>() else {
+            warn!("Type '{type_path}' has no ReflectAsset — skipping");
+            continue;
+        };
+
+        for (name, json_value) in named_entries {
+            // Deserialize with processor to resolve nested handles (e.g. textures in materials)
+            let mut deser_processor = JsnDeserializerProcessor {
+                asset_server: &asset_server,
+                parent_path,
+                local_assets: &local_assets,
+                entity_map: &[],
+            };
+
+            let deserializer =
+                TypedReflectDeserializer::with_processor(registration, &registry_guard, &mut deser_processor);
+            let Ok(reflected) = deserializer.deserialize(json_value) else {
+                warn!("Failed to deserialize inline asset '{name}' of type '{type_path}'");
+                continue;
+            };
+
+            // Add into the asset store and get a handle
+            let handle = reflect_asset.add(world, reflected.as_ref());
+            local_assets.insert(name.clone(), handle);
         }
     }
 
-    let entities: Vec<Entity> = scene_set.into_iter().collect();
-
-    // Build entity → index map for parent references
-    let index_map: HashMap<Entity, usize> =
-        entities.iter().enumerate().map(|(i, &e)| (e, i)).collect();
-
-    let registry = world.resource::<AppTypeRegistry>().clone();
-    let registry = registry.read();
-
-    // Component types handled as explicit fields — skip in the generic loop
-    let skip_ids: HashSet<TypeId> = HashSet::from([
-        TypeId::of::<Name>(),
-        TypeId::of::<Transform>(),
-        TypeId::of::<GlobalTransform>(),
-        TypeId::of::<Visibility>(),
-        TypeId::of::<InheritedVisibility>(),
-        TypeId::of::<ViewVisibility>(),
-        TypeId::of::<ChildOf>(),
-        TypeId::of::<Children>(),
-    ]);
-
-    entities
-        .iter()
-        .map(|&entity| {
-            let entity_ref = world.entity(entity);
-
-            // Core fields
-            let name = entity_ref.get::<Name>().map(|n| n.to_string());
-            let transform = entity_ref.get::<Transform>().map(|t| (*t).into());
-            let visibility = entity_ref
-                .get::<Visibility>()
-                .map(|v| (*v).into())
-                .unwrap_or_default();
-            let parent = entity_ref
-                .get::<ChildOf>()
-                .and_then(|c| index_map.get(&c.parent()).copied());
-
-            // Extensible components via reflection
-            let mut components = HashMap::new();
-
-            for registration in registry.iter() {
-                if skip_ids.contains(&registration.type_id()) {
-                    continue;
-                }
-
-                let type_path = registration.type_info().type_path_table().path();
-
-                if should_skip_component(type_path) {
-                    continue;
-                }
-
-                let Some(reflect_component) = registration.data::<ReflectComponent>() else {
-                    continue;
-                };
-                let Some(component) = reflect_component.reflect(entity_ref) else {
-                    continue;
-                };
-
-                // Try to serialize — skip on failure (handles unserializable types like Mesh3d)
-                let serializer = TypedReflectSerializer::new(component, &registry);
-                if let Ok(value) = serde_json::to_value(&serializer) {
-                    components.insert(type_path.to_string(), value);
-                }
-            }
-
-            JsnEntity {
-                name,
-                transform,
-                visibility,
-                parent,
-                components,
-            }
-        })
-        .collect()
+    local_assets
 }
 
 /// Spawn entities from a `Vec<JsnEntity>` into the world using reflection.
-pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
+pub fn load_scene_from_jsn(
+    world: &mut World,
+    entities: &[JsnEntity],
+    parent_path: &Path,
+    local_assets: &HashMap<String, UntypedHandle>,
+) {
     let registry = world.resource::<AppTypeRegistry>().clone();
+    let asset_server = world.resource::<AssetServer>().clone();
 
     // First pass: spawn entities with core fields
     let mut spawned: Vec<Entity> = Vec::new();
@@ -492,11 +1068,11 @@ pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
         }
     }
 
-    // Third pass: deserialize extensible components via reflection
-    let registry = registry.read();
+    // Third pass: deserialize extensible components via reflection with processor
+    let registry_guard = registry.read();
     for (i, jsn) in entities.iter().enumerate() {
         for (type_path, value) in &jsn.components {
-            let Some(registration) = registry.get_with_type_path(type_path) else {
+            let Some(registration) = registry_guard.get_with_type_path(type_path) else {
                 warn!("Unknown type '{type_path}' — skipping");
                 continue;
             };
@@ -505,7 +1081,17 @@ pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
                 continue;
             };
 
-            let deserializer = TypedReflectDeserializer::new(registration, &registry);
+            let mut deser_processor = JsnDeserializerProcessor {
+                asset_server: &asset_server,
+                parent_path,
+                local_assets,
+                entity_map: &spawned,
+            };
+            let deserializer = TypedReflectDeserializer::with_processor(
+                registration,
+                &registry_guard,
+                &mut deser_processor,
+            );
             let Ok(reflected) = deserializer.deserialize(value) else {
                 warn!("Failed to deserialize '{type_path}' — skipping");
                 continue;
@@ -515,7 +1101,7 @@ pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
                 reflect_component.insert(
                     &mut world.entity_mut(spawned[i]),
                     reflected.as_ref(),
-                    &registry,
+                    &registry_guard,
                 );
             }));
             if result.is_err() {
@@ -523,7 +1109,7 @@ pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
             }
         }
     }
-    drop(registry);
+    drop(registry_guard);
 
     // Post-load: re-trigger GLTF loading for GltfSource entities
     let gltf_entities: Vec<(Entity, String, usize)> = spawned
@@ -542,36 +1128,44 @@ pub fn load_scene_from_jsn(world: &mut World, entities: &[JsnEntity]) {
     }
 }
 
-/// Merge material definitions from a JSN file into the library, skipping duplicates.
-pub fn merge_material_definitions(world: &mut World, defs: &[JsnMaterialDefinition]) {
-    if defs.is_empty() {
-        return;
-    }
-    let mut library = world.resource_mut::<crate::material_definition::MaterialLibrary>();
-    for jsn_def in defs {
-        if library.get_by_name(&jsn_def.name).is_some() {
+pub fn new_scene(world: &mut World) {
+    clear_scene_entities(world);
+    let mut scene_path = world.resource_mut::<SceneFilePath>();
+    scene_path.path = None;
+    scene_path.metadata = JsnMetadata::default();
+    info!("New scene created");
+}
+
+// ─────────────────────────────────── Helpers ───────────────────────────────────
+
+/// Collect scene entities (named non-editor entities and all their descendants).
+/// Requires `&mut World` for `query_filtered`.
+fn collect_scene_entities_from_set(world: &mut World, editor_set: &HashSet<Entity>) -> Vec<Entity> {
+    let roots: Vec<Entity> = world
+        .query_filtered::<Entity, With<Name>>()
+        .iter(world)
+        .filter(|e| !editor_set.contains(e))
+        .collect();
+
+    // Expand to include all descendants
+    let mut scene_set = HashSet::new();
+    let mut stack = roots;
+    while let Some(entity) = stack.pop() {
+        if !scene_set.insert(entity) {
             continue;
         }
-        library.add(crate::material_definition::MaterialDefinition {
-            name: jsn_def.name.clone(),
-            base_color_texture: jsn_def.base_color_texture.clone(),
-            normal_map_texture: jsn_def.normal_map_texture.clone(),
-            metallic_roughness_texture: jsn_def.metallic_roughness_texture.clone(),
-            roughness_texture: jsn_def.roughness_texture.clone(),
-            metallic_texture: jsn_def.metallic_texture.clone(),
-            emissive_texture: jsn_def.emissive_texture.clone(),
-            occlusion_texture: jsn_def.occlusion_texture.clone(),
-            depth_texture: jsn_def.depth_texture.clone(),
-            base_color: jsn_def.base_color,
-            metallic: jsn_def.metallic,
-            perceptual_roughness: jsn_def.perceptual_roughness,
-            reflectance: jsn_def.reflectance,
-            emissive_intensity: jsn_def.emissive_intensity,
-            double_sided: jsn_def.double_sided,
-            flip_normal_map_y: jsn_def.flip_normal_map_y,
-            is_gloss_map: jsn_def.is_gloss_map,
-        });
+        if let Some(children) = world.get::<Children>(entity) {
+            for child in children.iter() {
+                if world.get::<EditorHidden>(child).is_none()
+                    && world.get::<NonSerializable>(child).is_none()
+                {
+                    stack.push(child);
+                }
+            }
+        }
     }
+
+    scene_set.into_iter().collect()
 }
 
 /// Collect the set of all editor entities (those with `EditorEntity` and all their descendants).
@@ -595,10 +1189,6 @@ fn collect_editor_entities(world: &mut World) -> HashSet<Entity> {
 }
 
 /// Remove scene entities from the world (named non-editor entities + their descendants).
-///
-/// Uses the same logic as `build_scene_snapshot`: only despawns entities that have a
-/// `Name` component (excluding editor entities) and all their descendants. This avoids
-/// destroying Bevy system entities (Window, Monitor, Pointer, etc.).
 fn clear_scene_entities(world: &mut World) {
     // Clear selection first to prevent on_entity_deselected observer from
     // firing on stale/despawned tree row entities.
@@ -640,139 +1230,22 @@ fn clear_scene_entities(world: &mut World) {
     }
 }
 
-struct JsnSerializerProcessor<'a> {
-    parent_path: Cow<'a, Path>,
-}
-
-impl<'a> ReflectSerializerProcessor for JsnSerializerProcessor<'a> {
-    fn try_serialize<S>(
-        &self,
-        value: &dyn PartialReflect,
-        registry: &TypeRegistry,
-        serializer: S,
-    ) -> Result<Result<S::Ok, S>, S::Error>
-    where
-        S: Serializer,
-    {
-        let Some(value) = value.try_as_reflect() else {
-            // This type isn't reflectable; fall back to standard serialization.
-            return Ok(Err(serializer));
-        };
-        let type_id = value.reflect_type_info().type_id();
-        let Some(reflect_handle) = registry.get_type_data::<ReflectHandle>(type_id) else {
-            // This isn't a `Handle`.
-            return Ok(Err(serializer));
-        };
-
-        let untyped_handle = reflect_handle
-            .downcast_handle_untyped(value.as_any())
-            .expect("This must have been a handle");
-        let Some(path) = untyped_handle.path() else {
-            return Ok(Ok(serializer.serialize_unit()?));
-        };
-        let path = pathdiff::diff_paths(path.path(), &self.parent_path)
-            .unwrap_or_else(|| path.path().to_owned());
-        Ok(Ok(serializer.serialize_str(&path.to_string_lossy())?))
-    }
-}
-
-/// Build an asset manifest by scanning entity components.
-fn build_asset_manifest(world: &mut World) -> JsnAssets {
-    let mut textures = Vec::new();
-    let mut models = Vec::new();
-    let mut material_names: Vec<String> = Vec::new();
-
-    // Scan brush face textures and material names
-    let mut brush_query = world.query::<&jackdaw_jsn::Brush>();
-    for brush in brush_query.iter(world) {
-        for face in &brush.faces {
-            if let Some(ref path) = face.texture_path {
-                if !textures.contains(path) {
-                    textures.push(path.clone());
-                }
-            }
-            if let Some(ref name) = face.material_name {
-                if !material_names.contains(name) {
-                    material_names.push(name.clone());
-                }
-            }
-        }
-    }
-
-    // Scan GLTF sources
-    let mut gltf_query = world.query::<&jackdaw_jsn::GltfSource>();
-    for source in gltf_query.iter(world) {
-        if !models.contains(&source.path) {
-            models.push(source.path.clone());
-        }
-    }
-
-    let scene_file_path = world.resource::<SceneFilePath>();
-    let parent_path = match scene_file_path
-        .path
-        .as_ref()
-        .and_then(|scene_file_path| Path::new(scene_file_path).parent())
-    {
-        Some(parent_path) => Cow::Borrowed(parent_path),
-        None => Cow::Owned(env::current_dir().expect("Couldn't access the current directory")),
-    };
-    let serializer_processor = JsnSerializerProcessor { parent_path };
-
-    // Collect referenced material definitions from the library
-    let material_def_cache =
-        world.resource::<crate::material_definition::MaterialDefinitionCache>();
-    let standard_materials = world.resource::<Assets<StandardMaterial>>();
-    let app_type_registry = world.resource::<AppTypeRegistry>();
-    let type_registry = app_type_registry.read();
-    let material_definitions: Vec<serde_json::Value> = material_names
-        .iter()
-        .filter_map(|name| {
-            let standard_material = standard_materials
-                .get(&material_def_cache.entries.get(name)?.material)
-                .cloned()?;
-            let serializer = ReflectSerializer::with_processor(
-                &standard_material,
-                &type_registry,
-                &serializer_processor,
-            );
-            let mut value = serializer.serialize(serde_json::value::Serializer).ok()?;
-            value
-                .as_object_mut()?
-                .insert("name".to_owned(), serde_json::Value::String(name.clone()));
-            Some(value)
-        })
-        .collect();
-
-    textures.sort();
-    models.sort();
-
-    JsnAssets {
-        textures,
-        models,
-        material_definitions,
-    }
-}
-
 /// ISO 8601 timestamp (simplified — no chrono dependency).
 fn chrono_now() -> String {
-    // Use std::time for a basic timestamp
     let since_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = since_epoch.as_secs();
-    // Basic ISO 8601 approximation
     let days = secs / 86400;
     let time_of_day = secs % 86400;
     let hours = time_of_day / 3600;
     let minutes = (time_of_day % 3600) / 60;
     let seconds = time_of_day % 60;
-    // Days since 1970-01-01, approximate year/month/day
     let (year, month, day) = days_to_date(days);
     format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
 fn days_to_date(days: u64) -> (u64, u64, u64) {
-    // Simplified calendar calculation
     let mut y = 1970;
     let mut remaining = days;
     loop {
@@ -801,6 +1274,65 @@ fn days_to_date(days: u64) -> (u64, u64, u64) {
 
 fn is_leap(y: u64) -> bool {
     (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+}
+
+/// Temporarily replace `Handle::default()` brush face materials with the palette material
+/// so they serialize as inline assets rather than null.
+/// Returns a list of (entity, face indices) that were changed.
+fn resolve_default_brush_materials(
+    world: &mut World,
+    scene_entities: &[Entity],
+) -> Vec<(Entity, Vec<usize>)> {
+    let palette_material = world
+        .get_resource::<BrushMaterialPalette>()
+        .and_then(|p| p.materials.first().cloned());
+    let Some(palette_material) = palette_material else {
+        return Vec::new();
+    };
+
+    let mut changed = Vec::new();
+
+    for &entity in scene_entities {
+        let Some(brush) = world.get::<Brush>(entity) else {
+            continue;
+        };
+
+        let default_faces: Vec<usize> = brush
+            .faces
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.material == Handle::default())
+            .map(|(i, _)| i)
+            .collect();
+
+        if default_faces.is_empty() {
+            continue;
+        }
+
+        // Use bypass_change_detection to avoid triggering mesh regen
+        let mut brush_mut = world.get_mut::<Brush>(entity).unwrap();
+        let brush_inner = brush_mut.bypass_change_detection();
+        for &fi in &default_faces {
+            brush_inner.faces[fi].material = palette_material.clone();
+        }
+
+        changed.push((entity, default_faces));
+    }
+
+    changed
+}
+
+/// Restore `Handle::default()` on brush faces that were temporarily resolved.
+fn restore_default_brush_materials(world: &mut World, changed: &[(Entity, Vec<usize>)]) {
+    for (entity, face_indices) in changed {
+        let Some(mut brush_mut) = world.get_mut::<Brush>(*entity) else {
+            continue;
+        };
+        let brush_inner = brush_mut.bypass_change_detection();
+        for &fi in face_indices {
+            brush_inner.faces[fi].material = Handle::default();
+        }
+    }
 }
 
 fn poll_scene_dialog(world: &mut World) {

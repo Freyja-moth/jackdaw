@@ -523,14 +523,14 @@ fn spawn_extruded_brush(
             return;
         };
 
-        // Apply last-used texture
-        let last_tex = world
-            .resource::<super::LastUsedTexture>()
-            .texture_path
+        // Apply last-used material
+        let last_mat = world
+            .resource::<super::LastUsedMaterial>()
+            .material
             .clone();
-        if let Some(ref path) = last_tex {
+        if let Some(ref mat) = last_mat {
             for face in &mut brush.faces {
-                face.texture_path = Some(path.clone());
+                face.material = mat.clone();
             }
         }
 
@@ -1543,12 +1543,10 @@ pub(super) fn handle_clip_mode(
             };
             let clip_face = BrushFaceData {
                 plane: plane.clone(),
-                material_index: 0,
-                texture_path: None,
-                material_name: None,
                 uv_offset: Vec2::ZERO,
                 uv_scale: Vec2::ONE,
                 uv_rotation: 0.0,
+                ..default()
             };
             let flipped_face = BrushFaceData {
                 plane: BrushPlane {

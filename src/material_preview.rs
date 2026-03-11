@@ -4,8 +4,6 @@ use bevy::{
     render::render_resource::TextureFormat,
 };
 
-use crate::material_definition::MaterialDefinitionCache;
-
 #[derive(Component)]
 pub struct PreviewSphere;
 
@@ -14,7 +12,7 @@ pub struct PreviewCamera;
 
 #[derive(Resource)]
 pub struct MaterialPreviewState {
-    pub active_material: Option<String>,
+    pub active_material: Option<Handle<StandardMaterial>>,
     pub orbit_yaw: f32,
     pub orbit_pitch: f32,
     pub zoom_distance: f32,
@@ -126,7 +124,6 @@ pub fn update_preview_camera_transform(
 
 pub fn update_active_preview_material(
     preview_state: Res<MaterialPreviewState>,
-    mat_cache: Res<MaterialDefinitionCache>,
     mut sphere_q: Query<&mut MeshMaterial3d<StandardMaterial>, With<PreviewSphere>>,
     mut camera_q: Query<&mut Camera, With<PreviewCamera>>,
 ) {
@@ -135,11 +132,9 @@ pub fn update_active_preview_material(
     }
 
     match &preview_state.active_material {
-        Some(name) => {
-            if let Some(entry) = mat_cache.entries.get(name) {
-                if let Ok(mut sphere_mat) = sphere_q.single_mut() {
-                    sphere_mat.0 = entry.material.clone();
-                }
+        Some(handle) => {
+            if let Ok(mut sphere_mat) = sphere_q.single_mut() {
+                sphere_mat.0 = handle.clone();
             }
             if let Ok(mut cam) = camera_q.single_mut() {
                 cam.is_active = true;

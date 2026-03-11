@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use bevy::{
     feathers::theme::ThemedText,
@@ -19,14 +20,9 @@ use crate::{
     asset_browser::attach_tooltip,
     brush::{Brush, BrushEditMode, BrushSelection, EditMode, SetBrush},
     commands::CommandHistory,
-    material_definition::{
-        MaterialDefinitionCache, MaterialLibrary, build_material_from_slots, detect_material_sets,
-        is_ktx2_non_2d, parse_texture_filename, pbr_filename_regex,
-    },
     material_preview::MaterialPreviewState,
     selection::Selection,
 };
-use jackdaw_feathers::icons::IconFont;
 
 pub struct MaterialBrowserPlugin;
 
@@ -34,7 +30,7 @@ impl Plugin for MaterialBrowserPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MaterialBrowserState>()
             .init_resource::<MaterialPreviewState>()
-            .init_resource::<SlotPickerContext>()
+            .init_resource::<MaterialRegistry>()
             .add_systems(
                 OnEnter(crate::AppState::Editor),
                 (
@@ -50,16 +46,34 @@ impl Plugin for MaterialBrowserPlugin {
                     update_material_browser_ui,
                     update_preview_area,
                     poll_material_browser_folder,
-                    poll_material_files_picker,
-                    poll_slot_file_picker,
                     crate::material_preview::update_preview_camera_transform,
                     crate::material_preview::update_active_preview_material,
                 )
                     .run_if(in_state(crate::AppState::Editor)),
             )
             .add_observer(handle_apply_material)
-            .add_observer(handle_select_material_preview)
-            .add_observer(handle_pick_slot_texture);
+            .add_observer(handle_select_material_preview);
+    }
+}
+
+/// Simple registry of named materials for browsing.
+#[derive(Resource, Default)]
+pub struct MaterialRegistry {
+    pub entries: Vec<MaterialRegistryEntry>,
+}
+
+pub struct MaterialRegistryEntry {
+    pub name: String,
+    pub handle: Handle<StandardMaterial>,
+}
+
+impl MaterialRegistry {
+    pub fn get_by_name(&self, name: &str) -> Option<&MaterialRegistryEntry> {
+        self.entries.iter().find(|e| e.name == name)
+    }
+
+    pub fn add(&mut self, name: String, handle: Handle<StandardMaterial>) {
+        self.entries.push(MaterialRegistryEntry { name, handle });
     }
 }
 
@@ -70,14 +84,14 @@ pub struct MaterialBrowserState {
     pub scan_directory: PathBuf,
 }
 
-#[derive(Event, Debug, Clone)]
+#[derive(Event, Clone)]
 pub struct ApplyMaterialDefToFaces {
-    pub name: String,
+    pub material: Handle<StandardMaterial>,
 }
 
-#[derive(Event, Debug, Clone)]
+#[derive(Event, Clone)]
 struct SelectMaterialPreview {
-    name: String,
+    handle: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -95,24 +109,6 @@ struct MaterialBrowserRootLabel;
 #[derive(Resource)]
 struct MaterialBrowserFolderTask(Task<Option<rfd::FileHandle>>);
 
-#[derive(Resource)]
-struct MaterialFilesPickerTask(Task<Option<Vec<rfd::FileHandle>>>);
-
-#[derive(Resource, Default)]
-struct SlotPickerContext {
-    material_name: Option<String>,
-    slot_name: Option<String>,
-}
-
-#[derive(Resource)]
-struct SlotFilePickerTask(Task<Option<rfd::FileHandle>>);
-
-#[derive(Event, Debug, Clone)]
-struct PickSlotTexture {
-    material_name: String,
-    slot_name: String,
-}
-
 /// Container for the interactive preview area (shown when a material is selected).
 #[derive(Component)]
 struct PreviewAreaContainer;
@@ -125,9 +121,133 @@ struct PreviewAreaImage;
 #[derive(Component)]
 struct PreviewAreaLabel;
 
+/// PBR filename regex pattern.
+fn pbr_filename_regex() -> Option<regex::Regex> {
+    let pattern = r"(?i)^(.+?)[_\-\.\s](diffuse|diff|albedo|base|col|color|basecolor|metallic|metalness|metal|mtl|roughness|rough|rgh|normal|normaldx|normalgl|nor|nrm|nrml|norm|orm|emission|emissive|emit|ao|ambient|occlusion|ambientocclusion|displacement|displace|disp|dsp|height|heightmap|alpha|opacity|specularity|specular|spec|spc|gloss|glossy|glossiness|bump|bmp|b|n)\.(png|jpg|jpeg|ktx2|bmp|tga|webp)$";
+    regex::Regex::new(pattern).ok()
+}
+
+/// Scan a directory for PBR texture sets and create `StandardMaterial` assets.
+fn detect_and_create_materials(
+    dir: &Path,
+    asset_root: &Path,
+    asset_server: &AssetServer,
+    materials: &mut Assets<StandardMaterial>,
+) -> Vec<(String, Handle<StandardMaterial>)> {
+    let re = match pbr_filename_regex() {
+        Some(r) => r,
+        None => return Vec::new(),
+    };
+
+    let mut groups: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    scan_dir_recursive(dir, asset_root, &re, &mut groups);
+
+    let mut results = Vec::new();
+    for (base_name, slots) in &groups {
+        let mut base_color_texture = None;
+        let mut normal_map_texture = None;
+        let mut metallic_roughness_texture = None;
+        let mut emissive_texture = None;
+        let mut occlusion_texture = None;
+        let mut depth_map = None;
+
+        for (tag, asset_path) in slots {
+            let tag_lower = tag.to_lowercase();
+            match tag_lower.as_str() {
+                "diffuse" | "diff" | "albedo" | "base" | "col" | "color" | "basecolor" | "b" => {
+                    base_color_texture = Some(asset_server.load::<Image>(asset_path.clone()));
+                }
+                "normalgl" | "nor" | "nrm" | "nrml" | "norm" | "bump" | "bmp" | "n" | "normal" => {
+                    normal_map_texture = Some(asset_server.load::<Image>(asset_path.clone()));
+                }
+                "orm" | "metallic" | "metalness" | "metal" | "mtl" | "roughness" | "rough" | "rgh" => {
+                    if metallic_roughness_texture.is_none() {
+                        metallic_roughness_texture = Some(asset_server.load::<Image>(asset_path.clone()));
+                    }
+                }
+                "emission" | "emissive" | "emit" => {
+                    emissive_texture = Some(asset_server.load::<Image>(asset_path.clone()));
+                }
+                "ao" | "ambient" | "occlusion" | "ambientocclusion" => {
+                    occlusion_texture = Some(asset_server.load::<Image>(asset_path.clone()));
+                }
+                "displacement" | "displace" | "disp" | "dsp" | "height" | "heightmap" => {
+                    depth_map = Some(asset_server.load::<Image>(asset_path.clone()));
+                }
+                _ => {}
+            }
+        }
+
+        // Only create if at least one texture slot is populated
+        if base_color_texture.is_none()
+            && normal_map_texture.is_none()
+            && metallic_roughness_texture.is_none()
+            && emissive_texture.is_none()
+            && occlusion_texture.is_none()
+            && depth_map.is_none()
+        {
+            continue;
+        }
+
+        let handle = materials.add(StandardMaterial {
+            base_color_texture,
+            normal_map_texture,
+            metallic_roughness_texture,
+            emissive_texture,
+            occlusion_texture,
+            depth_map,
+            ..default()
+        });
+
+        results.push((base_name.clone(), handle));
+    }
+
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results
+}
+
+fn scan_dir_recursive(
+    dir: &Path,
+    asset_root: &Path,
+    re: &regex::Regex,
+    groups: &mut HashMap<String, Vec<(String, String)>>,
+) {
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_dir_recursive(&path, asset_root, re, groups);
+        } else {
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            if let Some(caps) = re.captures(&file_name) {
+                let base_name = caps[1].to_string();
+                let tag = caps[2].to_string();
+
+                let asset_path = path
+                    .strip_prefix(asset_root)
+                    .map(|r| r.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+
+                groups
+                    .entry(base_name.to_lowercase())
+                    .or_default()
+                    .push((tag, asset_path));
+            }
+        }
+    }
+}
+
 fn scan_material_definitions(
     mut state: ResMut<MaterialBrowserState>,
-    mut library: ResMut<MaterialLibrary>,
+    mut registry: ResMut<MaterialRegistry>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
     project_root: Option<Res<crate::project::ProjectRoot>>,
 ) {
     let assets_dir = project_root
@@ -135,18 +255,19 @@ fn scan_material_definitions(
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("assets"));
     state.scan_directory = assets_dir.clone();
 
-    let detected = detect_material_sets(&state.scan_directory, &assets_dir);
-    for def in detected {
-        if library.get_by_name(&def.name).is_none() {
-            library.add(def);
+    let detected = detect_and_create_materials(&state.scan_directory, &assets_dir, &asset_server, &mut materials);
+    for (name, handle) in detected {
+        if registry.get_by_name(&name).is_none() {
+            registry.add(name, handle);
         }
     }
 }
 
 fn rescan_material_definitions(
     mut state: ResMut<MaterialBrowserState>,
-    mut library: ResMut<MaterialLibrary>,
-    mut cache: ResMut<MaterialDefinitionCache>,
+    mut registry: ResMut<MaterialRegistry>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
     project_root: Option<Res<crate::project::ProjectRoot>>,
 ) {
     if !state.needs_rescan {
@@ -158,12 +279,11 @@ fn rescan_material_definitions(
         .map(|p| p.assets_dir())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("assets"));
 
-    library.materials.clear();
-    cache.entries.clear();
+    registry.entries.clear();
 
-    let detected = detect_material_sets(&state.scan_directory, &assets_dir);
-    for def in detected {
-        library.add(def);
+    let detected = detect_and_create_materials(&state.scan_directory, &assets_dir, &asset_server, &mut materials);
+    for (name, handle) in detected {
+        registry.add(name, handle);
     }
 }
 
@@ -192,8 +312,7 @@ fn handle_apply_material(
                 let old = brush.clone();
                 for &face_idx in &brush_selection.faces {
                     if face_idx < brush.faces.len() {
-                        brush.faces[face_idx].material_name = Some(event.name.clone());
-                        brush.faces[face_idx].texture_path = None;
+                        brush.faces[face_idx].material = event.material.clone();
                     }
                 }
                 let cmd = SetBrush {
@@ -211,8 +330,7 @@ fn handle_apply_material(
             if let Ok(mut brush) = brushes.get_mut(entity) {
                 let old = brush.clone();
                 for face in brush.faces.iter_mut() {
-                    face.material_name = Some(event.name.clone());
-                    face.texture_path = None;
+                    face.material = event.material.clone();
                 }
                 let cmd = SetBrush {
                     entity,
@@ -231,10 +349,10 @@ fn handle_select_material_preview(
     event: On<SelectMaterialPreview>,
     mut preview_state: ResMut<MaterialPreviewState>,
 ) {
-    if preview_state.active_material.as_deref() == Some(&event.name) {
+    if preview_state.active_material.as_ref() == Some(&event.handle) {
         preview_state.active_material = None;
     } else {
-        preview_state.active_material = Some(event.name.clone());
+        preview_state.active_material = Some(event.handle.clone());
         preview_state.orbit_yaw = 0.5;
         preview_state.orbit_pitch = -0.3;
         preview_state.zoom_distance = 3.0;
@@ -245,8 +363,7 @@ fn handle_select_material_preview(
 fn update_preview_area(
     mut commands: Commands,
     preview_state: Res<MaterialPreviewState>,
-    library: Res<MaterialLibrary>,
-    icon_font: Res<IconFont>,
+    registry: Res<MaterialRegistry>,
     container_query: Query<(Entity, Option<&Children>), With<PreviewAreaContainer>>,
 ) {
     if !preview_state.is_changed() {
@@ -264,7 +381,7 @@ fn update_preview_area(
         }
     }
 
-    let Some(ref active_name) = preview_state.active_material else {
+    let Some(ref active_handle) = preview_state.active_material else {
         return;
     };
 
@@ -283,9 +400,15 @@ fn update_preview_area(
     ));
 
     // Material name
+    let active_name = registry
+        .entries
+        .iter()
+        .find(|e| e.handle == *active_handle)
+        .map(|e| e.name.clone())
+        .unwrap_or_else(|| format!("{:?}", active_handle.id()));
     commands.spawn((
         PreviewAreaLabel,
-        Text::new(active_name.clone()),
+        Text::new(active_name),
         TextFont {
             font_size: tokens::FONT_SM,
             ..Default::default()
@@ -299,107 +422,8 @@ fn update_preview_area(
         ChildOf(container),
     ));
 
-    // Slot details — show all 6 slots, with full paths and picker buttons
-    if let Some(def) = library.get_by_name(active_name) {
-        let slots: &[(&str, &str, &Option<String>)] = &[
-            ("Base Color", "base_color", &def.base_color_texture),
-            ("Normal", "normal", &def.normal_map_texture),
-            (
-                "Metal/Rough",
-                "metallic_roughness",
-                &def.metallic_roughness_texture,
-            ),
-            ("Roughness", "roughness", &def.roughness_texture),
-            ("Metallic", "metallic", &def.metallic_texture),
-            ("Emissive", "emissive", &def.emissive_texture),
-            ("Occlusion", "occlusion", &def.occlusion_texture),
-            ("Depth", "depth", &def.depth_texture),
-        ];
-        for &(label, slot_id, tex) in slots {
-            let display = tex.as_deref().unwrap_or("None").to_string();
-
-            let row = commands
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        column_gap: Val::Px(tokens::SPACING_XS),
-                        align_items: AlignItems::Center,
-                        flex_wrap: FlexWrap::Wrap,
-                        ..Default::default()
-                    },
-                    ChildOf(container),
-                ))
-                .id();
-            commands.spawn((
-                Text::new(format!("{label}:")),
-                TextFont {
-                    font_size: tokens::FONT_SM,
-                    ..Default::default()
-                },
-                TextColor(tokens::TEXT_SECONDARY),
-                Node {
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                },
-                ChildOf(row),
-            ));
-            let text_color = if tex.is_some() {
-                tokens::TEXT_PRIMARY
-            } else {
-                tokens::TEXT_SECONDARY
-            };
-            let text_entity = commands
-                .spawn((
-                    Text::new(display.clone()),
-                    TextFont {
-                        font_size: tokens::FONT_SM,
-                        ..Default::default()
-                    },
-                    TextColor(text_color),
-                    Node {
-                        flex_shrink: 1.0,
-                        ..Default::default()
-                    },
-                    ChildOf(row),
-                ))
-                .id();
-            // Tooltip for full path in case it gets clipped
-            if tex.is_some() {
-                attach_tooltip(&mut commands, text_entity, display);
-            }
-
-            // Folder picker button for this slot
-            let mat_name = active_name.clone();
-            let slot_name = slot_id.to_string();
-            let picker_btn = commands
-                .spawn((
-                    Node {
-                        padding: UiRect::all(Val::Px(2.0)),
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    },
-                    icons::icon_colored(
-                        icons::Icon::FolderOpen,
-                        tokens::FONT_SM,
-                        icon_font.0.clone(),
-                        tokens::TEXT_SECONDARY,
-                    ),
-                    ChildOf(row),
-                ))
-                .id();
-            commands.entity(picker_btn).observe(
-                move |_: On<Pointer<Click>>, mut commands: Commands| {
-                    commands.trigger(PickSlotTexture {
-                        material_name: mat_name.clone(),
-                        slot_name: slot_name.clone(),
-                    });
-                },
-            );
-        }
-    }
-
     // Apply button
-    let name_for_apply = active_name.clone();
+    let handle_for_apply = active_handle.clone();
     let apply_btn = commands
         .spawn((
             Node {
@@ -426,7 +450,7 @@ fn update_preview_area(
         .entity(apply_btn)
         .observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
             commands.trigger(ApplyMaterialDefToFaces {
-                name: name_for_apply.clone(),
+                material: handle_for_apply.clone(),
             });
         });
     commands.entity(apply_btn).observe(
@@ -443,85 +467,6 @@ fn update_preview_area(
             }
         },
     );
-}
-
-fn handle_pick_slot_texture(
-    event: On<PickSlotTexture>,
-    mut commands: Commands,
-    mut slot_ctx: ResMut<SlotPickerContext>,
-    raw_handle: Query<&RawHandleWrapper, With<PrimaryWindow>>,
-) {
-    slot_ctx.material_name = Some(event.material_name.clone());
-    slot_ctx.slot_name = Some(event.slot_name.clone());
-
-    let mut dialog = AsyncFileDialog::new()
-        .set_title(format!("Select texture for {} slot", event.slot_name))
-        .add_filter(
-            "Images",
-            &["png", "jpg", "jpeg", "ktx2", "bmp", "tga", "webp"],
-        );
-    if let Ok(rh) = raw_handle.single() {
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
-    let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
-    commands.insert_resource(SlotFilePickerTask(task));
-}
-
-fn poll_slot_file_picker(world: &mut World) {
-    let Some(mut task_res) = world.get_resource_mut::<SlotFilePickerTask>() else {
-        return;
-    };
-    let Some(result) = future::block_on(future::poll_once(&mut task_res.0)) else {
-        return;
-    };
-    world.remove_resource::<SlotFilePickerTask>();
-
-    let Some(handle) = result else {
-        return;
-    };
-
-    let file_path = handle.path().to_path_buf();
-
-    let slot_ctx = world.resource::<SlotPickerContext>();
-    let Some(material_name) = slot_ctx.material_name.clone() else {
-        return;
-    };
-    let Some(slot_name) = slot_ctx.slot_name.clone() else {
-        return;
-    };
-
-    // Convert to asset-relative path
-    let project_dir = crate::project::read_last_project();
-    let assets_dir = project_dir
-        .map(|p| p.join("assets"))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("assets"));
-
-    let asset_path = file_path
-        .strip_prefix(&assets_dir)
-        .map(|r| r.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|_| file_path.to_string_lossy().replace('\\', "/"));
-
-    let mut library = world.resource_mut::<MaterialLibrary>();
-    if let Some(def) = library.get_by_name_mut(&material_name) {
-        match slot_name.as_str() {
-            "base_color" => def.base_color_texture = Some(asset_path),
-            "normal" => def.normal_map_texture = Some(asset_path),
-            "metallic_roughness" => def.metallic_roughness_texture = Some(asset_path),
-            "emissive" => def.emissive_texture = Some(asset_path),
-            "occlusion" => def.occlusion_texture = Some(asset_path),
-            "depth" => def.depth_texture = Some(asset_path),
-            _ => {}
-        }
-    }
-
-    // Clear cached material to force rebuild
-    let mut cache = world.resource_mut::<MaterialDefinitionCache>();
-    cache.entries.remove(&material_name);
-
-    // Trigger preview rebuild
-    let mut preview_state = world.resource_mut::<MaterialPreviewState>();
-    preview_state.active_material = Some(material_name);
 }
 
 fn spawn_material_folder_dialog(
@@ -562,13 +507,13 @@ fn poll_material_browser_folder(world: &mut World) {
 
 fn update_material_browser_ui(
     mut commands: Commands,
-    library: Res<MaterialLibrary>,
+    registry: Res<MaterialRegistry>,
     state: Res<MaterialBrowserState>,
-    mat_cache: Res<MaterialDefinitionCache>,
+    materials: Res<Assets<StandardMaterial>>,
     grid_query: Query<(Entity, Option<&Children>), With<MaterialBrowserGrid>>,
     mut root_label_query: Query<&mut Text, With<MaterialBrowserRootLabel>>,
 ) {
-    let needs_rebuild = library.is_changed() || state.is_changed() || mat_cache.is_changed();
+    let needs_rebuild = registry.is_changed() || state.is_changed();
     if !needs_rebuild {
         return;
     }
@@ -589,12 +534,13 @@ fn update_material_browser_ui(
 
     let filter_lower = state.filter.to_lowercase();
 
-    for def in &library.materials {
-        if !filter_lower.is_empty() && !def.name.to_lowercase().contains(&filter_lower) {
+    for entry in &registry.entries {
+        if !filter_lower.is_empty() && !entry.name.to_lowercase().contains(&filter_lower) {
             continue;
         }
 
-        let name = def.name.clone();
+        let name = entry.name.clone();
+        let handle = entry.handle.clone();
 
         let thumb_entity = commands
             .spawn((
@@ -614,12 +560,10 @@ fn update_material_browser_ui(
             ))
             .id();
 
-        // Use preview_image → base_color_image → gray placeholder
-        let thumbnail = mat_cache.entries.get(&name).and_then(|e| {
-            e.preview_image
-                .clone()
-                .or_else(|| e.base_color_image.clone())
-        });
+        // Use base_color_texture as thumbnail if available
+        let thumbnail = materials
+            .get(&handle)
+            .and_then(|m| m.base_color_texture.clone());
 
         if let Some(img) = thumbnail {
             commands.spawn((
@@ -686,12 +630,12 @@ fn update_material_browser_ui(
         );
 
         // Single-click: select for preview
-        let name_for_select = name.clone();
+        let handle_for_select = handle.clone();
         commands.entity(thumb_entity).observe(
             move |click: On<Pointer<Click>>, mut commands: Commands| {
                 if click.event().button == PointerButton::Primary {
                     commands.trigger(SelectMaterialPreview {
-                        name: name_for_select.clone(),
+                        handle: handle_for_select.clone(),
                     });
                 }
             },
@@ -764,7 +708,6 @@ pub fn material_browser_panel(icon_font: Handle<Font>) -> impl Bundle {
                             ..Default::default()
                         },
                         children![
-                            add_material_button(icon_font.clone()),
                             material_folder_button(icon_font.clone()),
                             rescan_button(icon_font),
                         ],
@@ -857,127 +800,4 @@ fn rescan_button(icon_font: Handle<Font>) -> impl Bundle {
             },
         ),
     )
-}
-
-fn add_material_button(icon_font: Handle<Font>) -> impl Bundle {
-    (
-        Node {
-            padding: UiRect::all(Val::Px(tokens::SPACING_XS)),
-            border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_SM)),
-            ..Default::default()
-        },
-        icons::icon_colored(
-            icons::Icon::Plus,
-            tokens::FONT_MD,
-            icon_font,
-            tokens::TEXT_SECONDARY,
-        ),
-        observe(spawn_material_files_dialog),
-    )
-}
-
-fn spawn_material_files_dialog(
-    _: On<Pointer<Click>>,
-    mut commands: Commands,
-    raw_handle: Query<&RawHandleWrapper, With<PrimaryWindow>>,
-) {
-    let mut dialog = AsyncFileDialog::new()
-        .set_title("Select texture files for material")
-        .add_filter(
-            "Images",
-            &["png", "jpg", "jpeg", "ktx2", "bmp", "tga", "webp"],
-        );
-    if let Ok(rh) = raw_handle.single() {
-        let handle = unsafe { rh.get_handle() };
-        dialog = dialog.set_parent(&handle);
-    }
-    let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_files().await });
-    commands.insert_resource(MaterialFilesPickerTask(task));
-}
-
-fn poll_material_files_picker(world: &mut World) {
-    let Some(mut task_res) = world.get_resource_mut::<MaterialFilesPickerTask>() else {
-        return;
-    };
-    let Some(result) = future::block_on(future::poll_once(&mut task_res.0)) else {
-        return;
-    };
-    world.remove_resource::<MaterialFilesPickerTask>();
-
-    let Some(handles) = result else {
-        return;
-    };
-
-    let Some(re) = pbr_filename_regex() else {
-        return;
-    };
-
-    let project_dir = crate::project::read_last_project();
-    let assets_dir = project_dir
-        .map(|p| p.join("assets"))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("assets"));
-
-    let mut slots: Vec<(String, String)> = Vec::new();
-    let mut base_names: Vec<String> = Vec::new();
-
-    for handle in &handles {
-        let path = handle.path().to_path_buf();
-
-        // Skip non-2D KTX2
-        if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("ktx2"))
-            && is_ktx2_non_2d(&path)
-        {
-            continue;
-        }
-
-        let file_name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        if let Some((base_name, tag)) = parse_texture_filename(&file_name, &re) {
-            let asset_path = path
-                .strip_prefix(&assets_dir)
-                .map(|r| r.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
-            base_names.push(base_name);
-            slots.push((tag, asset_path));
-        }
-    }
-
-    if slots.is_empty() {
-        return;
-    }
-
-    // Use most common base name
-    let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    for name in &base_names {
-        *name_counts.entry(name.as_str()).or_default() += 1;
-    }
-    let material_name = name_counts
-        .into_iter()
-        .max_by_key(|&(_, count)| count)
-        .map(|(name, _)| name.to_lowercase())
-        .unwrap_or_else(|| "new_material".to_string());
-
-    let def = build_material_from_slots(material_name.clone(), &slots);
-
-    // Only add if at least one texture slot is populated
-    if def.base_color_texture.is_none()
-        && def.normal_map_texture.is_none()
-        && def.metallic_roughness_texture.is_none()
-        && def.emissive_texture.is_none()
-        && def.occlusion_texture.is_none()
-        && def.depth_texture.is_none()
-    {
-        return;
-    }
-
-    let mut library = world.resource_mut::<MaterialLibrary>();
-    library.upsert(def);
-
-    let mut preview_state = world.resource_mut::<MaterialPreviewState>();
-    preview_state.active_material = Some(material_name);
 }

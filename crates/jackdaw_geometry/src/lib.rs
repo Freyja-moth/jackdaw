@@ -11,11 +11,8 @@ pub struct BrushPlane {
 #[derive(Clone, Debug, Reflect, Default)]
 pub struct BrushFaceData {
     pub plane: BrushPlane,
-    pub material_index: usize,
-    /// Asset-relative texture path (e.g. "textures/brick.png"). Overrides material_index when set.
-    pub texture_path: Option<String>,
-    /// References a MaterialDefinition by name. Takes priority over texture_path when set.
-    pub material_name: Option<String>,
+    /// Material handle for this face. Serialized as an asset path or inline `#Name` reference.
+    pub material: Handle<StandardMaterial>,
     pub uv_offset: Vec2,
     pub uv_scale: Vec2,
     pub uv_rotation: f32,
@@ -195,9 +192,7 @@ pub fn brush_planes_to_world(
                     normal: world_normal,
                     distance: world_distance,
                 },
-                material_index: face.material_index,
-                texture_path: face.texture_path.clone(),
-                material_name: face.material_name.clone(),
+                material: face.material.clone(),
                 uv_offset: face.uv_offset,
                 uv_scale: face.uv_scale,
                 uv_rotation: face.uv_rotation,
@@ -267,9 +262,7 @@ pub fn subtract_brush(
                     distance: -d,
                 },
                 uv_scale: Vec2::ONE,
-                material_index: template.material_index,
-                texture_path: template.texture_path.clone(),
-                material_name: template.material_name.clone(),
+                material: template.material.clone(),
                 ..default()
             });
             let (outside_verts, _) = compute_brush_geometry(&outside_faces);
@@ -286,9 +279,7 @@ pub fn subtract_brush(
                     distance: d,
                 },
                 uv_scale: Vec2::ONE,
-                material_index: template.material_index,
-                texture_path: template.texture_path.clone(),
-                material_name: template.material_name.clone(),
+                material: template.material.clone(),
                 ..default()
             });
             let (inside_verts, _) = compute_brush_geometry(&inside_faces);

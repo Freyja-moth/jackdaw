@@ -82,7 +82,7 @@ pub fn create_entity(
                     Visibility::default(),
                 ))
                 .id();
-            commands.queue(apply_last_texture(id));
+            commands.queue(apply_last_material(id));
             id
         }
         EntityTemplate::Sphere => {
@@ -94,7 +94,7 @@ pub fn create_entity(
                     Visibility::default(),
                 ))
                 .id();
-            commands.queue(apply_last_texture(id));
+            commands.queue(apply_last_material(id));
             id
         }
         EntityTemplate::PointLight => commands
@@ -140,17 +140,17 @@ pub fn create_entity(
     entity
 }
 
-/// Returns a command that applies the last-used texture to all faces of a brush entity.
-fn apply_last_texture(entity: Entity) -> impl FnOnce(&mut World) {
+/// Returns a command that applies the last-used material to all faces of a brush entity.
+fn apply_last_material(entity: Entity) -> impl FnOnce(&mut World) {
     move |world: &mut World| {
-        let tex_path = world
-            .resource::<crate::brush::LastUsedTexture>()
-            .texture_path
+        let last_mat = world
+            .resource::<crate::brush::LastUsedMaterial>()
+            .material
             .clone();
-        if let Some(path) = tex_path {
+        if let Some(mat) = last_mat {
             if let Some(mut brush) = world.get_mut::<crate::brush::Brush>(entity) {
                 for face in &mut brush.faces {
-                    face.texture_path = Some(path.clone());
+                    face.material = mat.clone();
                 }
             }
         }

@@ -2,7 +2,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
 use super::{CHUNK_SIZE, TerrainChunk, TerrainDirtyChunks};
-use crate::EditorHidden;
+use crate::{EditorHidden, NonSerializable};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
@@ -80,6 +80,7 @@ fn initialize_terrain_chunks(
                     Visibility::default(),
                     ChildOf(terrain_entity),
                     EditorHidden,
+                    NonSerializable,
                 ));
             }
         }

@@ -1,8 +1,9 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use bevy::{
-    asset::AssetPath,
+    asset::{AssetPath, UntypedHandle},
     ecs::reflect::AppTypeRegistry,
     prelude::*,
     reflect::serde::{TypedReflectDeserializer, TypedReflectSerializer},
@@ -156,7 +157,9 @@ pub fn instantiate_template(world: &mut World, path: &str, position: Vec3) {
         }
     };
 
-    let (_spawned, roots) = spawn_jsn_entities(world, &jsn_entities, position);
+    let parent_path = Path::new(path).parent().unwrap_or(Path::new(""));
+    let local_assets = HashMap::new();
+    let (_spawned, roots) = spawn_jsn_entities(world, &jsn_entities, position, parent_path, &local_assets);
     finalize_instantiation(world, &roots);
 }
 
@@ -177,12 +180,13 @@ pub fn instantiate_jsn_prefab(world: &mut World, path: &str, position: Vec3) {
         }
     };
 
-    // Merge material definitions from the prefab
-    crate::scene_io::merge_material_definitions(world, &jsn.assets.material_definitions);
+    // Load inline assets from the prefab
+    let parent_path = Path::new(path).parent().unwrap_or(Path::new(""));
+    let local_assets = crate::scene_io::load_inline_assets(world, &jsn.assets, parent_path);
 
     // Spawn entities using the shared JSN loader
     let jsn_entities = &jsn.scene;
-    let (spawned, roots) = spawn_jsn_entities(world, jsn_entities, position);
+    let (spawned, roots) = spawn_jsn_entities(world, jsn_entities, position, parent_path, &local_assets);
 
     // Attach JsnPrefab component to root entities
     for &root in &roots {
@@ -204,8 +208,11 @@ fn spawn_jsn_entities(
     world: &mut World,
     jsn_entities: &[JsnEntity],
     position: Vec3,
+    parent_path: &Path,
+    local_assets: &HashMap<String, UntypedHandle>,
 ) -> (Vec<Entity>, Vec<Entity>) {
     let registry = world.resource::<AppTypeRegistry>().clone();
+    let asset_server = world.resource::<AssetServer>().clone();
 
     // First pass: spawn entities with core fields
     let mut spawned: Vec<Entity> = Vec::new();
@@ -233,7 +240,7 @@ fn spawn_jsn_entities(
         }
     }
 
-    // Third pass: deserialize extensible components via reflection
+    // Third pass: deserialize extensible components via reflection with processor
     {
         let registry = registry.read();
         for (i, jsn) in jsn_entities.iter().enumerate() {
@@ -245,7 +252,17 @@ fn spawn_jsn_entities(
                 let Some(reflect_component) = registration.data::<ReflectComponent>() else {
                     continue;
                 };
-                let deserializer = TypedReflectDeserializer::new(registration, &registry);
+                let mut deser_processor = crate::scene_io::JsnDeserializerProcessor {
+                    asset_server: &asset_server,
+                    parent_path,
+                    local_assets,
+                    entity_map: &spawned,
+                };
+                let deserializer = TypedReflectDeserializer::with_processor(
+                    registration,
+                    &registry,
+                    &mut deser_processor,
+                );
                 let Ok(reflected) = deserializer.deserialize(value) else {
                     warn!("Failed to deserialize '{type_path}' — skipping");
                     continue;

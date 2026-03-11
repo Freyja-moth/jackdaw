@@ -5,8 +5,6 @@ mod hull;
 mod interaction;
 pub(crate) mod mesh;
 
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 
 use crate::commands::EditorCommand;
@@ -77,21 +75,10 @@ pub struct BrushMaterialPalette {
     pub preview_materials: Vec<Handle<StandardMaterial>>,
 }
 
-/// Remembers the last texture applied via the texture browser, so new brushes inherit it.
+/// Remembers the last material applied via the texture/material browser, so new brushes inherit it.
 #[derive(Resource, Default)]
-pub struct LastUsedTexture {
-    pub texture_path: Option<String>,
-}
-
-/// Cached texture materials, keyed by asset-relative path.
-#[derive(Resource, Default)]
-pub struct TextureMaterialCache {
-    pub entries: HashMap<String, TextureCacheEntry>,
-}
-
-pub struct TextureCacheEntry {
-    pub image: Handle<Image>,
-    pub material: Handle<StandardMaterial>,
+pub struct LastUsedMaterial {
+    pub material: Option<Handle<StandardMaterial>>,
 }
 
 pub struct SetBrush {
@@ -129,14 +116,12 @@ impl Plugin for BrushPlugin {
             .init_resource::<EditMode>()
             .init_resource::<BrushSelection>()
             .init_resource::<BrushMaterialPalette>()
-            .init_resource::<TextureMaterialCache>()
+
             .init_resource::<BrushDragState>()
             .init_resource::<VertexDragState>()
             .init_resource::<EdgeDragState>()
             .init_resource::<ClipState>()
-            .init_resource::<LastUsedTexture>()
-            .init_resource::<crate::material_definition::MaterialDefinitionCache>()
-            .init_resource::<crate::material_definition::MaterialLibrary>()
+            .init_resource::<LastUsedMaterial>()
             .add_systems(
                 OnEnter(crate::AppState::Editor),
                 mesh::setup_default_materials,
@@ -145,10 +130,6 @@ impl Plugin for BrushPlugin {
                 Update,
                 (
                     interaction::handle_edit_mode_keys,
-                    mesh::ensure_texture_materials,
-                    mesh::ensure_material_definitions,
-                    mesh::set_texture_repeat_mode,
-                    mesh::set_material_def_repeat_mode,
                     mesh::sync_brush_preview,
                     mesh::regenerate_brush_meshes,
                     mesh::apply_brush_preview_materials,

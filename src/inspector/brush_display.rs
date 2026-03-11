@@ -1,7 +1,6 @@
 use crate::EditorEntity;
-use crate::asset_browser::ClearTextureFromFaces;
 use crate::brush::{
-    Brush, BrushEditMode, BrushFaceData, BrushSelection, EditMode, SetBrush, TextureMaterialCache,
+    Brush, BrushEditMode, BrushFaceData, BrushSelection, EditMode, SetBrush,
 };
 use crate::commands::CommandHistory;
 
@@ -13,7 +12,7 @@ use jackdaw_feathers::{
 
 use super::{BrushFaceField, BrushFaceFieldBinding, BrushFacePropsContainer};
 
-/// Apply the first selected face's texture + UV settings to all faces of the brush.
+/// Apply the first selected face's material + UV settings to all faces of the brush.
 #[derive(Event, Debug, Clone)]
 pub(crate) struct ApplyTextureToAllFaces;
 
@@ -76,22 +75,20 @@ pub(super) struct BrushFacePropsState {
     data_hash: u64,
 }
 
-/// Clear material definition from currently selected brush faces.
+/// Clear material from currently selected brush faces.
 #[derive(Event, Debug, Clone)]
 pub(crate) struct ClearMaterialFromFaces;
 
 fn hash_face_data(face: &BrushFaceData) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    // Hash the fields we care about for display
-    face.texture_path.hash(&mut hasher);
-    face.material_name.hash(&mut hasher);
+    // Hash the material handle id
+    face.material.id().hash(&mut hasher);
     face.uv_offset.x.to_bits().hash(&mut hasher);
     face.uv_offset.y.to_bits().hash(&mut hasher);
     face.uv_scale.x.to_bits().hash(&mut hasher);
     face.uv_scale.y.to_bits().hash(&mut hasher);
     face.uv_rotation.to_bits().hash(&mut hasher);
-    face.material_index.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -101,8 +98,8 @@ pub(crate) fn update_brush_face_properties(
     brush_selection: Res<BrushSelection>,
     brushes: Query<&Brush>,
     container_query: Query<(Entity, Option<&Children>), With<BrushFacePropsContainer>>,
-    texture_cache: Res<TextureMaterialCache>,
     mut local_state: Local<BrushFacePropsState>,
+    materials: Res<Assets<StandardMaterial>>,
 ) {
     let Ok((container_entity, container_children)) = container_query.single() else {
         return;
@@ -182,142 +179,15 @@ pub(crate) fn update_brush_face_properties(
         ChildOf(container_entity),
     ));
 
-    // Texture info
-    let texture_text = match &face.texture_path {
-        Some(path) => path.clone(),
-        None => "No Texture".to_string(),
-    };
-    let tex_row = commands
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(tokens::SPACING_XS),
-                width: Val::Percent(100.0),
-                ..Default::default()
-            },
-            ChildOf(container_entity),
-        ))
-        .id();
+    // Material info
+    let has_material = face.material != Handle::default();
+    if has_material {
+        let mat_label = face
+            .material
+            .path()
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| format!("Material {:?}", face.material.id()));
 
-    // Texture thumbnail if available
-    if let Some(ref path) = face.texture_path {
-        if let Some(entry) = texture_cache.entries.get(path) {
-            commands.spawn((
-                ImageNode::new(entry.image.clone()),
-                Node {
-                    width: Val::Px(32.0),
-                    height: Val::Px(32.0),
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                },
-                ChildOf(tex_row),
-            ));
-        }
-    }
-
-    commands.spawn((
-        Text::new(texture_text),
-        TextFont {
-            font_size: tokens::FONT_SM,
-            ..Default::default()
-        },
-        TextColor(tokens::TEXT_SECONDARY),
-        Node {
-            flex_grow: 1.0,
-            ..Default::default()
-        },
-        ChildOf(tex_row),
-    ));
-
-    // Clear texture button (only if texture is set)
-    if face.texture_path.is_some() {
-        let btn = commands
-            .spawn((
-                Node {
-                    padding: UiRect::axes(Val::Px(tokens::SPACING_SM), Val::Px(2.0)),
-                    border_radius: BorderRadius::all(Val::Px(3.0)),
-                    ..Default::default()
-                },
-                BackgroundColor(tokens::INPUT_BG),
-                ChildOf(tex_row),
-            ))
-            .id();
-        commands.spawn((
-            Text::new("Clear"),
-            TextFont {
-                font_size: tokens::FONT_SM,
-                ..Default::default()
-            },
-            TextColor(tokens::TEXT_PRIMARY),
-            ChildOf(btn),
-        ));
-        commands
-            .entity(btn)
-            .observe(|_: On<Pointer<Click>>, mut commands: Commands| {
-                commands.trigger(ClearTextureFromFaces);
-            });
-        commands.entity(btn).observe(
-            |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
-                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
-                    bg.0 = tokens::HOVER_BG;
-                }
-            },
-        );
-        commands.entity(btn).observe(
-            |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
-                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
-                    bg.0 = tokens::INPUT_BG;
-                }
-            },
-        );
-    }
-
-    // "Apply to All Faces" button (copies this face's texture + UV to every face)
-    if face.texture_path.is_some() {
-        let apply_all_btn = commands
-            .spawn((
-                Node {
-                    padding: UiRect::axes(Val::Px(tokens::SPACING_SM), Val::Px(2.0)),
-                    border_radius: BorderRadius::all(Val::Px(3.0)),
-                    ..Default::default()
-                },
-                BackgroundColor(tokens::INPUT_BG),
-                ChildOf(container_entity),
-            ))
-            .id();
-        commands.spawn((
-            Text::new("Apply to All Faces"),
-            TextFont {
-                font_size: tokens::FONT_SM,
-                ..Default::default()
-            },
-            TextColor(tokens::TEXT_PRIMARY),
-            ChildOf(apply_all_btn),
-        ));
-        commands
-            .entity(apply_all_btn)
-            .observe(|_: On<Pointer<Click>>, mut commands: Commands| {
-                commands.trigger(ApplyTextureToAllFaces);
-            });
-        commands.entity(apply_all_btn).observe(
-            |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
-                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
-                    bg.0 = tokens::HOVER_BG;
-                }
-            },
-        );
-        commands.entity(apply_all_btn).observe(
-            |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
-                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
-                    bg.0 = tokens::INPUT_BG;
-                }
-            },
-        );
-    }
-
-    // Material definition info
-    if let Some(ref mat_name) = face.material_name {
         let mat_row = commands
             .spawn((
                 Node {
@@ -331,8 +201,24 @@ pub(crate) fn update_brush_face_properties(
             ))
             .id();
 
+        // Show base_color thumbnail if available
+        if let Some(mat) = materials.get(&face.material) {
+            if let Some(ref tex) = mat.base_color_texture {
+                commands.spawn((
+                    ImageNode::new(tex.clone()),
+                    Node {
+                        width: Val::Px(32.0),
+                        height: Val::Px(32.0),
+                        flex_shrink: 0.0,
+                        ..Default::default()
+                    },
+                    ChildOf(mat_row),
+                ));
+            }
+        }
+
         commands.spawn((
-            Text::new(format!("Material: {mat_name}")),
+            Text::new(mat_label),
             TextFont {
                 font_size: tokens::FONT_SM,
                 ..Default::default()
@@ -345,6 +231,7 @@ pub(crate) fn update_brush_face_properties(
             ChildOf(mat_row),
         ));
 
+        // Clear material button
         let clear_mat_btn = commands
             .spawn((
                 Node {
@@ -384,6 +271,57 @@ pub(crate) fn update_brush_face_properties(
                 }
             },
         );
+
+        // "Apply to All Faces" button
+        let apply_all_btn = commands
+            .spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(tokens::SPACING_SM), Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(3.0)),
+                    ..Default::default()
+                },
+                BackgroundColor(tokens::INPUT_BG),
+                ChildOf(container_entity),
+            ))
+            .id();
+        commands.spawn((
+            Text::new("Apply to All Faces"),
+            TextFont {
+                font_size: tokens::FONT_SM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_PRIMARY),
+            ChildOf(apply_all_btn),
+        ));
+        commands
+            .entity(apply_all_btn)
+            .observe(|_: On<Pointer<Click>>, mut commands: Commands| {
+                commands.trigger(ApplyTextureToAllFaces);
+            });
+        commands.entity(apply_all_btn).observe(
+            |hover: On<Pointer<Over>>, mut bg: Query<&mut BackgroundColor>| {
+                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
+                    bg.0 = tokens::HOVER_BG;
+                }
+            },
+        );
+        commands.entity(apply_all_btn).observe(
+            |out: On<Pointer<Out>>, mut bg: Query<&mut BackgroundColor>| {
+                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
+                    bg.0 = tokens::INPUT_BG;
+                }
+            },
+        );
+    } else {
+        commands.spawn((
+            Text::new("No Material"),
+            TextFont {
+                font_size: tokens::FONT_SM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_SECONDARY),
+            ChildOf(container_entity),
+        ));
     }
 
     // UV Offset
@@ -670,7 +608,7 @@ pub(crate) fn handle_clear_material(
     let old = brush.clone();
     for &face_idx in &brush_selection.faces {
         if face_idx < brush.faces.len() {
-            brush.faces[face_idx].material_name = None;
+            brush.faces[face_idx].material = Handle::default();
         }
     }
 
@@ -685,7 +623,7 @@ pub(crate) fn handle_clear_material(
 }
 
 pub(crate) fn handle_clear_texture(
-    _event: On<ClearTextureFromFaces>,
+    _event: On<crate::asset_browser::ClearTextureFromFaces>,
     brush_selection: Res<BrushSelection>,
     edit_mode: Res<EditMode>,
     mut brushes: Query<&mut Brush>,
@@ -707,7 +645,7 @@ pub(crate) fn handle_clear_texture(
     let old = brush.clone();
     for &face_idx in &brush_selection.faces {
         if face_idx < brush.faces.len() {
-            brush.faces[face_idx].texture_path = None;
+            brush.faces[face_idx].material = Handle::default();
         }
     }
 
@@ -749,7 +687,7 @@ pub(crate) fn handle_apply_texture_to_all(
 
     let old = brush.clone();
     for face in &mut brush.faces {
-        face.texture_path = source.texture_path.clone();
+        face.material = source.material.clone();
         face.uv_scale = source.uv_scale;
         face.uv_offset = source.uv_offset;
         face.uv_rotation = source.uv_rotation;
@@ -759,7 +697,7 @@ pub(crate) fn handle_apply_texture_to_all(
         entity: brush_entity,
         old,
         new: brush.clone(),
-        label: "Apply texture to all faces".to_string(),
+        label: "Apply material to all faces".to_string(),
     };
     history.undo_stack.push(Box::new(cmd));
     history.redo_stack.clear();

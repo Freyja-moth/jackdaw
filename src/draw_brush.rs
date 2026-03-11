@@ -9,12 +9,11 @@ use bevy::{
 
 use crate::{
     EditorEntity,
-    brush::{BrushFaceEntity, BrushMaterialPalette, TextureMaterialCache},
+    brush::{BrushFaceEntity, BrushMaterialPalette},
     commands::{
         CommandGroup, CommandHistory, DespawnEntity, EditorCommand, snapshot_entity,
         snapshot_rebuild,
     },
-    material_definition::MaterialDefinitionCache,
     selection::{Selected, Selection},
     snapping::SnapSettings,
     viewport::{MainViewportCamera, SceneViewport},
@@ -746,15 +745,15 @@ fn spawn_drawn_brush(active: &ActiveDraw, commands: &mut Commands) {
     };
 
     commands.queue(move |world: &mut World| {
-        // Apply last-used texture to all faces
-        let last_tex = world
-            .resource::<crate::brush::LastUsedTexture>()
-            .texture_path
+        // Apply last-used material to all faces
+        let last_mat = world
+            .resource::<crate::brush::LastUsedMaterial>()
+            .material
             .clone();
         let mut brush = brush;
-        if let Some(ref path) = last_tex {
+        if let Some(ref mat) = last_mat {
             for face in &mut brush.faces {
-                face.texture_path = Some(path.clone());
+                face.material = mat.clone();
             }
         }
 
@@ -871,9 +870,9 @@ fn append_to_brush(active: &ActiveDraw, commands: &mut Commands) {
 
         // Build new face data, matching old faces where possible for texture preservation
         let old_face_polygons = compute_brush_geometry(&old_brush.faces).1;
-        let last_tex = world
-            .resource::<crate::brush::LastUsedTexture>()
-            .texture_path
+        let last_mat = world
+            .resource::<crate::brush::LastUsedMaterial>()
+            .material
             .clone();
 
         let mut new_faces = Vec::with_capacity(hull_faces.len());
@@ -933,21 +932,19 @@ fn append_to_brush(active: &ActiveDraw, commands: &mut Commands) {
                         normal: hull_face.normal,
                         distance: hull_face.distance,
                     },
-                    material_index: old_face.material_index,
-                    texture_path: old_face.texture_path.clone(),
-                    material_name: old_face.material_name.clone(),
+                    material: old_face.material.clone(),
                     uv_offset: old_face.uv_offset,
                     uv_scale: old_face.uv_scale,
                     uv_rotation: old_face.uv_rotation,
                 }
             } else {
-                // New face from the appended shape — use last-used texture
+                // New face from the appended shape — use last-used material
                 BrushFaceData {
                     plane: BrushPlane {
                         normal: hull_face.normal,
                         distance: hull_face.distance,
                     },
-                    texture_path: last_tex.clone(),
+                    material: last_mat.clone().unwrap_or_default(),
                     uv_scale: Vec2::ONE,
                     ..default()
                 }
@@ -1157,14 +1154,14 @@ fn spawn_polygon_brush(active: &ActiveDraw, commands: &mut Commands) {
             return;
         };
 
-        // Apply last-used texture
-        let last_tex = world
-            .resource::<crate::brush::LastUsedTexture>()
-            .texture_path
+        // Apply last-used material
+        let last_mat = world
+            .resource::<crate::brush::LastUsedMaterial>()
+            .material
             .clone();
-        if let Some(ref path) = last_tex {
+        if let Some(ref mat) = last_mat {
             for face in &mut brush.faces {
-                face.texture_path = Some(path.clone());
+                face.material = mat.clone();
             }
         }
 
@@ -1218,8 +1215,6 @@ fn manage_draw_preview_mesh(
     hidden_query: Query<Entity, (With<CutPreviewHidden>, With<Brush>)>,
     mut visibility_query: Query<&mut Visibility>,
     palette: Res<BrushMaterialPalette>,
-    texture_cache: Res<TextureMaterialCache>,
-    mat_def_cache: Res<MaterialDefinitionCache>,
     mut cached_add_material: Local<Option<Handle<StandardMaterial>>>,
     mut cached_cut_material: Local<Option<Handle<StandardMaterial>>>,
 
@@ -1454,22 +1449,10 @@ fn manage_draw_preview_mesh(
                     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
                     mesh.insert_indices(Indices::U32(flat_indices));
 
-                    let material = match (&face_data.material_name, &face_data.texture_path) {
-                        (Some(name), _) => mat_def_cache
-                            .entries
-                            .get(name)
-                            .map(|e| e.material.clone())
-                            .unwrap_or_else(|| palette.materials[0].clone()),
-                        (None, Some(path)) => texture_cache
-                            .entries
-                            .get(path)
-                            .map(|e| e.material.clone())
-                            .unwrap_or_else(|| palette.materials[0].clone()),
-                        (None, None) => palette
-                            .materials
-                            .get(face_data.material_index)
-                            .cloned()
-                            .unwrap_or_else(|| palette.materials[0].clone()),
+                    let material = if face_data.material != Handle::default() {
+                        face_data.material.clone()
+                    } else {
+                        palette.materials.first().cloned().unwrap_or_default()
                     };
 
                     commands.spawn((
@@ -1937,9 +1920,9 @@ fn join_selected_brushes(
 
         // Build new face data, matching old primary faces where possible
         let old_face_polygons = compute_brush_geometry(&old_primary_brush.faces).1;
-        let last_tex = world
-            .resource::<crate::brush::LastUsedTexture>()
-            .texture_path
+        let last_mat = world
+            .resource::<crate::brush::LastUsedMaterial>()
+            .material
             .clone();
 
         let hull_to_input: Vec<usize> = hull_positions
@@ -1997,9 +1980,7 @@ fn join_selected_brushes(
                         normal: hull_face.normal,
                         distance: hull_face.distance,
                     },
-                    material_index: old_face.material_index,
-                    texture_path: old_face.texture_path.clone(),
-                    material_name: old_face.material_name.clone(),
+                    material: old_face.material.clone(),
                     uv_offset: old_face.uv_offset,
                     uv_scale: old_face.uv_scale,
                     uv_rotation: old_face.uv_rotation,
@@ -2010,7 +1991,7 @@ fn join_selected_brushes(
                         normal: hull_face.normal,
                         distance: hull_face.distance,
                     },
-                    texture_path: last_tex.clone(),
+                    material: last_mat.clone().unwrap_or_default(),
                     uv_scale: Vec2::ONE,
                     ..default()
                 }

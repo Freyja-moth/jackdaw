@@ -66,9 +66,7 @@ pub fn load_catalog(world: &mut World) {
     };
 
     // Resolve relative asset paths from the assets directory, not the catalog file location
-    let assets_dir = world
-        .resource::<crate::project::ProjectRoot>()
-        .assets_dir();
+    let assets_dir = world.resource::<crate::project::ProjectRoot>().assets_dir();
 
     // Use the same load_inline_assets function scenes use
     let loaded = crate::scene_io::load_inline_assets(world, &jsn_catalog.assets, &assets_dir);
@@ -82,7 +80,10 @@ pub fn load_catalog(world: &mut World) {
     }
     catalog.dirty = false;
 
-    info!("Loaded asset catalog with {} entries", catalog.handles.len());
+    info!(
+        "Loaded asset catalog with {} entries",
+        catalog.handles.len()
+    );
 }
 
 /// Save the catalog to `.jsn/catalog.jsn`.

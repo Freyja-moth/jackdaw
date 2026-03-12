@@ -423,7 +423,10 @@ impl<'a> ReflectDeserializerProcessor for JsnDeserializerProcessor<'a> {
                 if let Some(handle) = self.catalog_assets.get(&relative_path) {
                     return Ok(Ok(Box::new(handle.clone()).into_partial_reflect()));
                 }
-                warn!("Catalog asset '{}' not found — using default", relative_path);
+                warn!(
+                    "Catalog asset '{}' not found — using default",
+                    relative_path
+                );
                 if let Some(reflect_default) = registration.data::<ReflectDefault>() {
                     return Ok(Ok(reflect_default.default().into_partial_reflect()));
                 }

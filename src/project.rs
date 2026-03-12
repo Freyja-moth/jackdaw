@@ -12,6 +12,9 @@ pub struct ProjectRoot {
 }
 
 impl ProjectRoot {
+    pub fn jsn_dir(&self) -> PathBuf {
+        self.root.join(".jsn")
+    }
     pub fn assets_dir(&self) -> PathBuf {
         self.root.join("assets")
     }
@@ -65,7 +68,14 @@ pub fn read_last_project() -> Option<PathBuf> {
 }
 
 pub fn load_project_config(root: &Path) -> Option<JsnProject> {
-    let path = root.join("project.jsn");
+    // Prefer .jsn/ directory, fall back to legacy root location
+    let new_path = root.join(".jsn/project.jsn");
+    let legacy_path = root.join("project.jsn");
+    let path = if new_path.is_file() {
+        new_path
+    } else {
+        legacy_path
+    };
     let data = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&data).ok()
 }
@@ -85,8 +95,10 @@ pub fn create_default_project(root: &Path) -> JsnProject {
         },
     };
 
-    // Write to disk
-    let path = root.join("project.jsn");
+    // Write to .jsn/ directory
+    let jsn_dir = root.join(".jsn");
+    let _ = std::fs::create_dir_all(&jsn_dir);
+    let path = jsn_dir.join("project.jsn");
     if let Ok(data) = serde_json::to_string_pretty(&project) {
         let _ = std::fs::write(&path, data);
     }

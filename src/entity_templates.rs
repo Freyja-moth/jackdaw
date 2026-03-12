@@ -215,6 +215,10 @@ fn spawn_jsn_entities(
 ) -> (Vec<Entity>, Vec<Entity>) {
     let registry = world.resource::<AppTypeRegistry>().clone();
     let asset_server = world.resource::<AssetServer>().clone();
+    let catalog_handles = world
+        .get_resource::<crate::asset_catalog::AssetCatalog>()
+        .map(|c| c.handles.clone())
+        .unwrap_or_default();
 
     // First pass: spawn entities with core fields
     let mut spawned: Vec<Entity> = Vec::new();
@@ -256,6 +260,7 @@ fn spawn_jsn_entities(
                     asset_server: &asset_server,
                     parent_path,
                     local_assets,
+                    catalog_assets: &catalog_handles,
                     entity_map: &spawned,
                 };
                 let deserializer = TypedReflectDeserializer::with_processor(

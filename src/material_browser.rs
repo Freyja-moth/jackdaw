@@ -34,14 +34,18 @@ impl Plugin for MaterialBrowserPlugin {
             .add_systems(
                 OnEnter(crate::AppState::Editor),
                 (
+                    |world: &mut World| crate::asset_catalog::load_catalog(world),
                     scan_material_definitions,
+                    |world: &mut World| crate::asset_catalog::save_catalog(world),
                     crate::material_preview::setup_material_preview_scene,
-                ),
+                )
+                    .chain(),
             )
             .add_systems(
                 Update,
                 (
                     rescan_material_definitions,
+                    save_catalog_if_dirty,
                     apply_material_filter,
                     update_material_browser_ui,
                     update_preview_area,
@@ -278,49 +282,137 @@ fn scan_dir_recursive(
     }
 }
 
-fn scan_material_definitions(
-    mut state: ResMut<MaterialBrowserState>,
-    mut registry: ResMut<MaterialRegistry>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    asset_server: Res<AssetServer>,
-    project_root: Option<Res<crate::project::ProjectRoot>>,
-) {
-    let assets_dir = project_root
+fn scan_material_definitions(world: &mut World) {
+    let assets_dir = world
+        .get_resource::<crate::project::ProjectRoot>()
         .map(|p| p.assets_dir())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("assets"));
-    state.scan_directory = assets_dir.clone();
+    world.resource_mut::<MaterialBrowserState>().scan_directory = assets_dir.clone();
 
-    let detected =
-        detect_and_create_materials(&state.scan_directory, &asset_server, &mut materials);
+    let detected = {
+        let asset_server = world.resource::<AssetServer>().clone();
+        let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+        detect_and_create_materials(&assets_dir, &asset_server, &mut materials)
+    };
+
     for (name, handle) in detected {
-        if registry.get_by_name(&name).is_none() {
-            registry.add(name, handle);
+        let already_registered = world
+            .resource::<MaterialRegistry>()
+            .get_by_name(&name)
+            .is_some();
+        if already_registered {
+            continue;
+        }
+
+        let catalog_name = format!("@{name}");
+        let already_in_catalog = world
+            .resource::<crate::asset_catalog::AssetCatalog>()
+            .contains_name(&catalog_name);
+        if already_in_catalog {
+            // Use the catalog's existing handle so scene saves find it in id_to_name
+            let catalog_handle = world
+                .resource::<crate::asset_catalog::AssetCatalog>()
+                .handles
+                .get(&catalog_name)
+                .cloned();
+            if let Some(h) = catalog_handle {
+                world
+                    .resource_mut::<MaterialRegistry>()
+                    .add(name, h.typed::<StandardMaterial>());
+            }
+        } else {
+            // Serialize the material + nested textures into catalog assets
+            let mut catalog_assets = world
+                .resource::<crate::asset_catalog::AssetCatalog>()
+                .assets
+                .clone();
+            crate::scene_io::serialize_asset_into(
+                world,
+                handle.clone().untyped(),
+                &catalog_name,
+                &assets_dir,
+                &mut catalog_assets,
+            );
+            let mut catalog = world.resource_mut::<crate::asset_catalog::AssetCatalog>();
+            catalog.assets = catalog_assets;
+            catalog.insert(catalog_name, handle.clone().untyped());
+            catalog.dirty = true;
+
+            world.resource_mut::<MaterialRegistry>().add(name, handle);
         }
     }
 }
 
-fn rescan_material_definitions(
-    mut state: ResMut<MaterialBrowserState>,
-    mut registry: ResMut<MaterialRegistry>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    asset_server: Res<AssetServer>,
-    project_root: Option<Res<crate::project::ProjectRoot>>,
-) {
-    if !state.needs_rescan {
+fn rescan_material_definitions(world: &mut World) {
+    let needs_rescan = world.resource::<MaterialBrowserState>().needs_rescan;
+    if !needs_rescan {
         return;
     }
-    state.needs_rescan = false;
 
-    state.scan_directory = project_root
+    let assets_dir = world
+        .get_resource::<crate::project::ProjectRoot>()
         .map(|p| p.assets_dir())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("assets"));
 
-    registry.entries.clear();
+    {
+        let mut state = world.resource_mut::<MaterialBrowserState>();
+        state.needs_rescan = false;
+        state.scan_directory = assets_dir.clone();
+    }
 
-    let detected =
-        detect_and_create_materials(&state.scan_directory, &asset_server, &mut materials);
+    world.resource_mut::<MaterialRegistry>().entries.clear();
+
+    let detected = {
+        let asset_server = world.resource::<AssetServer>().clone();
+        let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+        detect_and_create_materials(&assets_dir, &asset_server, &mut materials)
+    };
+
     for (name, handle) in detected {
-        registry.add(name, handle);
+        let catalog_name = format!("@{name}");
+        let already_in_catalog = world
+            .resource::<crate::asset_catalog::AssetCatalog>()
+            .contains_name(&catalog_name);
+        if already_in_catalog {
+            // Use the catalog's existing handle so scene saves find it in id_to_name
+            let catalog_handle = world
+                .resource::<crate::asset_catalog::AssetCatalog>()
+                .handles
+                .get(&catalog_name)
+                .cloned();
+            if let Some(h) = catalog_handle {
+                world
+                    .resource_mut::<MaterialRegistry>()
+                    .add(name, h.typed::<StandardMaterial>());
+            }
+        } else {
+            let mut catalog_assets = world
+                .resource::<crate::asset_catalog::AssetCatalog>()
+                .assets
+                .clone();
+            crate::scene_io::serialize_asset_into(
+                world,
+                handle.clone().untyped(),
+                &catalog_name,
+                &assets_dir,
+                &mut catalog_assets,
+            );
+            let mut catalog = world.resource_mut::<crate::asset_catalog::AssetCatalog>();
+            catalog.assets = catalog_assets;
+            catalog.insert(catalog_name, handle.clone().untyped());
+            catalog.dirty = true;
+
+            world.resource_mut::<MaterialRegistry>().add(name, handle);
+        }
+    }
+}
+
+fn save_catalog_if_dirty(world: &mut World) {
+    let is_dirty = world
+        .get_resource::<crate::asset_catalog::AssetCatalog>()
+        .is_some_and(|c| c.dirty);
+    if is_dirty {
+        crate::asset_catalog::save_catalog(world);
     }
 }
 

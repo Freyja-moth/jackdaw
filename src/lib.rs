@@ -1,5 +1,6 @@
 pub mod alignment_guides;
 pub mod asset_browser;
+pub mod asset_catalog;
 pub mod brush;
 pub mod commands;
 pub mod custom_properties;
@@ -113,6 +114,7 @@ impl Plugin for EditorPlugin {
             ))
             .insert_resource(UiTheme(create_dark_theme()))
             .init_resource::<layout::KeybindHelpPopover>()
+            .init_resource::<asset_catalog::AssetCatalog>()
             .add_systems(
                 OnEnter(AppState::Editor),
                 (spawn_layout, populate_menu).chain(),

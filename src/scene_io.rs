@@ -168,9 +168,20 @@ fn save_scene_inner(world: &mut World) {
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry_guard = registry.read();
 
+    // Get catalog reverse lookup for emitting @Name references
+    let catalog_id_to_name = world
+        .get_resource::<crate::asset_catalog::AssetCatalog>()
+        .map(|c| c.id_to_name.clone())
+        .unwrap_or_default();
+
     // --- Phase 1: Collect inline assets from all scene entity components ---
-    let (inline_assets, inline_asset_data) =
-        collect_inline_assets(world, &registry_guard, &parent_path, &scene_entities);
+    let (inline_assets, inline_asset_data) = collect_inline_assets(
+        world,
+        &registry_guard,
+        &parent_path,
+        &scene_entities,
+        &catalog_id_to_name,
+    );
 
     // --- Phase 2: Build entity list and serialize ---
     let entities = build_scene_snapshot(
@@ -239,6 +250,9 @@ fn save_scene_inner(world: &mut World) {
             }
         })
         .detach();
+
+    // Save catalog alongside scene if dirty
+    crate::asset_catalog::save_catalog(world);
 }
 
 pub fn load_scene(world: &mut World) {
@@ -351,6 +365,8 @@ pub(crate) struct JsnDeserializerProcessor<'a> {
     pub(crate) parent_path: &'a Path,
     /// Maps inline `#Name` references to loaded handles.
     pub(crate) local_assets: &'a HashMap<String, UntypedHandle>,
+    /// Maps catalog `@Name` references to loaded handles.
+    pub(crate) catalog_assets: &'a HashMap<String, UntypedHandle>,
     /// Maps scene-local indices to spawned entities.
     pub(crate) entity_map: &'a [Entity],
 }
@@ -402,7 +418,18 @@ impl<'a> ReflectDeserializerProcessor for JsnDeserializerProcessor<'a> {
                 }
             }
 
-            // Check for inline asset reference
+            // Check for catalog asset reference (@Name)
+            if relative_path.starts_with('@') {
+                if let Some(handle) = self.catalog_assets.get(&relative_path) {
+                    return Ok(Ok(Box::new(handle.clone()).into_partial_reflect()));
+                }
+                warn!("Catalog asset '{}' not found — using default", relative_path);
+                if let Some(reflect_default) = registration.data::<ReflectDefault>() {
+                    return Ok(Ok(reflect_default.default().into_partial_reflect()));
+                }
+            }
+
+            // Check for inline asset reference (#Name)
             if let Some(handle) = self.local_assets.get(&relative_path) {
                 return Ok(Ok(Box::new(handle.clone()).into_partial_reflect()));
             }
@@ -555,11 +582,15 @@ impl<'a> JsnDeserializerProcessor<'a> {
 /// Walk all scene entity components, find `Handle<T>` fields that have no asset path
 /// (runtime-created), serialize them into the generic assets table, and return a map
 /// of asset ID → inline name for the serializer processor.
+///
+/// Assets already in the `AssetCatalog` are emitted as `@Name` references and excluded
+/// from the scene-local asset table.
 fn collect_inline_assets(
     world: &World,
     registry: &TypeRegistry,
     parent_path: &Path,
     scene_entities: &[Entity],
+    catalog_id_to_name: &HashMap<UntypedAssetId, String>,
 ) -> (
     HashMap<UntypedAssetId, String>,
     HashMap<String, HashMap<String, serde_json::Value>>,
@@ -608,6 +639,7 @@ fn collect_inline_assets(
                 &mut id_to_name,
                 &mut asset_data,
                 &mut counters,
+                catalog_id_to_name,
             );
         }
     }
@@ -624,6 +656,7 @@ fn collect_handles_from_reflect(
     id_to_name: &mut HashMap<UntypedAssetId, String>,
     asset_data: &mut HashMap<String, HashMap<String, serde_json::Value>>,
     counters: &mut HashMap<String, usize>,
+    catalog_id_to_name: &HashMap<UntypedAssetId, String>,
 ) {
     let Some(value) = value.try_as_reflect() else {
         return;
@@ -638,6 +671,13 @@ fn collect_handles_from_reflect(
 
         // Already collected — skip
         if id_to_name.contains_key(&untyped_handle.id()) {
+            return;
+        }
+
+        // Check catalog first — if this handle is a catalog asset, emit @Name
+        // and don't inline it into the scene's asset table
+        if let Some(catalog_name) = catalog_id_to_name.get(&untyped_handle.id()) {
+            id_to_name.insert(untyped_handle.id(), catalog_name.clone());
             return;
         }
 
@@ -711,6 +751,7 @@ fn collect_handles_from_reflect(
             id_to_name,
             asset_data,
             counters,
+            catalog_id_to_name,
         );
 
         // Generate a name like "Material0", "Material1"
@@ -754,6 +795,7 @@ fn collect_handles_from_reflect(
                         id_to_name,
                         asset_data,
                         counters,
+                        catalog_id_to_name,
                     );
                 }
             }
@@ -769,6 +811,7 @@ fn collect_handles_from_reflect(
                         id_to_name,
                         asset_data,
                         counters,
+                        catalog_id_to_name,
                     );
                 }
             }
@@ -784,6 +827,7 @@ fn collect_handles_from_reflect(
                         id_to_name,
                         asset_data,
                         counters,
+                        catalog_id_to_name,
                     );
                 }
             }
@@ -799,6 +843,7 @@ fn collect_handles_from_reflect(
                         id_to_name,
                         asset_data,
                         counters,
+                        catalog_id_to_name,
                     );
                 }
             }
@@ -814,6 +859,7 @@ fn collect_handles_from_reflect(
                         id_to_name,
                         asset_data,
                         counters,
+                        catalog_id_to_name,
                     );
                 }
             }
@@ -828,6 +874,7 @@ fn collect_handles_from_reflect(
                     id_to_name,
                     asset_data,
                     counters,
+                    catalog_id_to_name,
                 );
             }
         }
@@ -841,6 +888,7 @@ fn collect_handles_from_reflect(
                     id_to_name,
                     asset_data,
                     counters,
+                    catalog_id_to_name,
                 );
             }
         }
@@ -855,11 +903,89 @@ fn collect_handles_from_reflect(
                         id_to_name,
                         asset_data,
                         counters,
+                        catalog_id_to_name,
                     );
                 }
             }
         }
         bevy::reflect::ReflectRef::Opaque(_) => {}
+    }
+}
+
+/// Serialize a single runtime asset (and its nested handles like textures)
+/// into `JsnAssets` format. `parent_path` is used to compute relative file paths
+/// (should be the assets directory so texture paths resolve correctly on reload).
+pub fn serialize_asset_into(
+    world: &World,
+    handle: UntypedHandle,
+    name: &str,
+    parent_path: &Path,
+    assets: &mut JsnAssets,
+) {
+    let registry = world.resource::<AppTypeRegistry>().read();
+
+    // UntypedHandle::type_id() returns the *asset* type ID directly (e.g. StandardMaterial)
+    let asset_type_id = handle.type_id();
+    let Some(asset_registration) = registry.get(asset_type_id) else {
+        return;
+    };
+    let Some(reflect_asset) = asset_registration.data::<ReflectAsset>() else {
+        return;
+    };
+    let asset_type_path = asset_registration
+        .type_info()
+        .type_path_table()
+        .path()
+        .to_string();
+
+    let Some(asset_reflect) = reflect_asset.get(world, handle.id()) else {
+        return;
+    };
+
+    // Collect nested handles (e.g. textures inside a StandardMaterial)
+    let empty_catalog = HashMap::new();
+    let mut id_to_name: HashMap<UntypedAssetId, String> = HashMap::new();
+    let mut nested_assets: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
+
+    // Seed counters from existing entries so subsequent calls don't reuse names
+    let mut counters: HashMap<String, usize> = HashMap::new();
+    for (type_path, entries) in &assets.0 {
+        counters.insert(type_path.clone(), entries.len());
+    }
+
+    collect_handles_from_reflect(
+        asset_reflect.as_partial_reflect(),
+        &registry,
+        world,
+        parent_path,
+        &mut id_to_name,
+        &mut nested_assets,
+        &mut counters,
+        &empty_catalog,
+    );
+
+    // Merge nested asset entries (images etc.) into the output JsnAssets
+    for (type_path, entries) in nested_assets {
+        let target = assets.0.entry(type_path).or_default();
+        for (entry_name, value) in entries {
+            target.insert(entry_name, value);
+        }
+    }
+
+    // Serialize the root asset itself
+    let ser_processor = JsnSerializerProcessor {
+        parent_path: Cow::Borrowed(parent_path),
+        inline_assets: &id_to_name,
+        entity_to_index: &HashMap::new(),
+    };
+    let serializer =
+        TypedReflectSerializer::with_processor(asset_reflect, &registry, &ser_processor);
+    if let Ok(json_value) = serde_json::to_value(&serializer) {
+        assets
+            .0
+            .entry(asset_type_path)
+            .or_default()
+            .insert(name.to_string(), json_value);
     }
 }
 
@@ -1033,13 +1159,19 @@ fn finish_load_scene(world: &mut World, chosen: &std::path::Path) {
 }
 
 /// Deserialize inline assets from the generic assets table.
-/// Returns a map of `#Name` → `UntypedHandle` for the deserializer processor.
+/// Returns a map of `#Name` / `@Name` → `UntypedHandle` for the deserializer processor.
 pub fn load_inline_assets(
     world: &mut World,
     assets: &JsnAssets,
     parent_path: &Path,
 ) -> HashMap<String, UntypedHandle> {
     let mut local_assets: HashMap<String, UntypedHandle> = HashMap::new();
+
+    // Pre-populate with catalog assets so @Name references in string values resolve
+    let catalog_handles = world
+        .get_resource::<crate::asset_catalog::AssetCatalog>()
+        .map(|c| c.handles.clone())
+        .unwrap_or_default();
 
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry_guard = registry.read();
@@ -1052,6 +1184,16 @@ pub fn load_inline_assets(
             let serde_json::Value::String(rel_path) = json_value else {
                 continue;
             };
+
+            // @Name reference → resolve from catalog
+            if rel_path.starts_with('@') {
+                if let Some(handle) = catalog_handles.get(rel_path.as_str()) {
+                    local_assets.insert(name.clone(), handle.clone());
+                } else {
+                    warn!("Catalog asset '{rel_path}' referenced by '{name}' not found");
+                }
+                continue;
+            }
 
             let abs_path = if Path::new(rel_path).is_relative() {
                 parent_path.join(rel_path)
@@ -1096,6 +1238,7 @@ pub fn load_inline_assets(
                 asset_server: &asset_server,
                 parent_path,
                 local_assets: &local_assets,
+                catalog_assets: &catalog_handles,
                 entity_map: &[],
             };
 
@@ -1127,6 +1270,10 @@ pub fn load_scene_from_jsn(
 ) {
     let registry = world.resource::<AppTypeRegistry>().clone();
     let asset_server = world.resource::<AssetServer>().clone();
+    let catalog_handles = world
+        .get_resource::<crate::asset_catalog::AssetCatalog>()
+        .map(|c| c.handles.clone())
+        .unwrap_or_default();
 
     // First pass: spawn entities with core fields
     let mut spawned: Vec<Entity> = Vec::new();
@@ -1169,6 +1316,7 @@ pub fn load_scene_from_jsn(
                 asset_server: &asset_server,
                 parent_path,
                 local_assets,
+                catalog_assets: &catalog_handles,
                 entity_map: &spawned,
             };
             let deserializer = TypedReflectDeserializer::with_processor(

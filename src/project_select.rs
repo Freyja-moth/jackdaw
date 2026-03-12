@@ -39,7 +39,9 @@ fn spawn_project_selector(mut commands: Commands, editor_font: Res<EditorFont>) 
 
     // Detect CWD project candidate
     let cwd = std::env::current_dir().unwrap_or_default();
-    let cwd_has_project = cwd.join("project.jsn").is_file() || cwd.join("assets").is_dir();
+    let cwd_has_project = cwd.join(".jsn/project.jsn").is_file()
+        || cwd.join("project.jsn").is_file()
+        || cwd.join("assets").is_dir();
 
     // UI camera for the project selector screen
     commands.spawn((ProjectSelectorRoot, Camera2d));

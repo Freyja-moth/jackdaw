@@ -147,6 +147,18 @@ pub struct JsnAssets(pub HashMap<String, HashMap<String, serde_json::Value>>);
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct JsnEditorState {}
 
+/// Top-level `catalog.jsn` file structure for project-wide asset deduplication.
+///
+/// Uses the same `JsnAssets` format as scenes. Assets are referenced with `@Name`
+/// prefix (vs `#Name` for scene-local inline assets).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct JsnCatalog {
+    /// Format header (same as scene files).
+    pub jsn: JsnHeader,
+    /// Project-wide named assets.
+    pub assets: JsnAssets,
+}
+
 /// Top-level `project.jsn` file structure.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct JsnProject {

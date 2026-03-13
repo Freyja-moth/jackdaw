@@ -11,7 +11,7 @@ use bevy::{
 };
 use jackdaw_feathers::{
     icons,
-    text_edit::{self, TextEditProps, TextEditValue},
+    text_edit::{self, TextEditCommitEvent, TextEditDragging, TextEditProps, TextEditValue},
     tokens,
 };
 use rfd::AsyncFileDialog;
@@ -51,13 +51,18 @@ impl Plugin for MaterialBrowserPlugin {
                     update_material_browser_ui,
                     update_preview_area,
                     poll_material_browser_folder,
+                    poll_texture_slot_pick,
                     crate::material_preview::update_preview_camera_transform,
                     crate::material_preview::update_active_preview_material,
                 )
                     .run_if(in_state(crate::AppState::Editor)),
             )
             .add_observer(handle_apply_material)
-            .add_observer(handle_select_material_preview);
+            .add_observer(handle_select_material_preview)
+            .add_observer(on_material_param_commit)
+            .add_observer(handle_create_new_material)
+            .add_observer(handle_browse_texture_slot)
+            .add_observer(handle_clear_texture_slot);
     }
 }
 
@@ -126,6 +131,124 @@ struct PreviewAreaImage;
 #[derive(Component)]
 struct PreviewAreaLabel;
 
+/// Identifies which material parameter a numeric input controls.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum MaterialParamInput {
+    ParallaxDepthScale,
+    MaxParallaxLayers,
+    PerceptualRoughness,
+    Metallic,
+    Reflectance,
+}
+
+/// Identifies a texture slot on `StandardMaterial`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TextureSlot {
+    BaseColorTexture,
+    NormalMapTexture,
+    MetallicRoughnessTexture,
+    EmissiveTexture,
+    OcclusionTexture,
+    DepthMap,
+}
+
+impl TextureSlot {
+    const ALL: [TextureSlot; 6] = [
+        TextureSlot::BaseColorTexture,
+        TextureSlot::NormalMapTexture,
+        TextureSlot::MetallicRoughnessTexture,
+        TextureSlot::EmissiveTexture,
+        TextureSlot::OcclusionTexture,
+        TextureSlot::DepthMap,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            TextureSlot::BaseColorTexture => "base_color_texture",
+            TextureSlot::NormalMapTexture => "normal_map_texture",
+            TextureSlot::MetallicRoughnessTexture => "metallic_roughness_texture",
+            TextureSlot::EmissiveTexture => "emissive_texture",
+            TextureSlot::OcclusionTexture => "occlusion_texture",
+            TextureSlot::DepthMap => "depth_map",
+        }
+    }
+
+    fn is_srgb(self) -> bool {
+        matches!(
+            self,
+            TextureSlot::BaseColorTexture | TextureSlot::EmissiveTexture
+        )
+    }
+
+    fn get_from(self, mat: &StandardMaterial) -> Option<Handle<Image>> {
+        match self {
+            TextureSlot::BaseColorTexture => mat.base_color_texture.clone(),
+            TextureSlot::NormalMapTexture => mat.normal_map_texture.clone(),
+            TextureSlot::MetallicRoughnessTexture => mat.metallic_roughness_texture.clone(),
+            TextureSlot::EmissiveTexture => mat.emissive_texture.clone(),
+            TextureSlot::OcclusionTexture => mat.occlusion_texture.clone(),
+            TextureSlot::DepthMap => mat.depth_map.clone(),
+        }
+    }
+
+    fn set_on(self, mat: &mut StandardMaterial, handle: Option<Handle<Image>>) {
+        match self {
+            TextureSlot::BaseColorTexture => mat.base_color_texture = handle,
+            TextureSlot::NormalMapTexture => mat.normal_map_texture = handle,
+            TextureSlot::MetallicRoughnessTexture => {
+                mat.metallic_roughness_texture = handle;
+                if mat.metallic_roughness_texture.is_some() {
+                    // When a metallic/roughness texture is present, scalars multiply the
+                    // texture values. Default both to 1.0 so the texture is used as-is.
+                    mat.metallic = 1.0;
+                    mat.perceptual_roughness = 1.0;
+                }
+            }
+            TextureSlot::EmissiveTexture => mat.emissive_texture = handle,
+            TextureSlot::OcclusionTexture => mat.occlusion_texture = handle,
+            TextureSlot::DepthMap => {
+                let has_depth = handle.is_some();
+                mat.depth_map = handle;
+                if has_depth {
+                    if mat.parallax_depth_scale == 0.0 {
+                        mat.parallax_depth_scale = 0.05;
+                    }
+                    if mat.max_parallax_layer_count == 0.0 {
+                        mat.max_parallax_layer_count = 32.0;
+                    }
+                    mat.parallax_mapping_method =
+                        bevy::pbr::ParallaxMappingMethod::Occlusion;
+                } else {
+                    mat.parallax_depth_scale = 0.0;
+                    mat.max_parallax_layer_count = 0.0;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Event)]
+struct CreateNewMaterial;
+
+#[derive(Event)]
+struct BrowseTextureSlot {
+    slot: TextureSlot,
+    material_handle: Handle<StandardMaterial>,
+}
+
+#[derive(Event)]
+struct ClearTextureSlot {
+    slot: TextureSlot,
+    material_handle: Handle<StandardMaterial>,
+}
+
+#[derive(Resource)]
+struct TextureSlotPickTask {
+    task: Task<Option<rfd::FileHandle>>,
+    slot: TextureSlot,
+    material_handle: Handle<StandardMaterial>,
+}
+
 /// PBR filename regex pattern.
 pub(crate) fn pbr_filename_regex() -> Option<regex::Regex> {
     let pattern = r"(?i)^(.+?)[_\-\.\s](diffuse|diff|albedo|base|col|color|basecolor|metallic|metalness|metal|mtl|roughness|rough|rgh|normal|normaldx|normalgl|nor|nrm|nrml|norm|orm|emission|emissive|emit|ao|ambient|occlusion|ambientocclusion|displacement|displace|disp|dsp|height|heightmap|alpha|opacity|specularity|specular|spec|spc|gloss|glossy|glossiness|bump|bmp|b|n)\.(png|jpg|jpeg|ktx2|bmp|tga|webp)$";
@@ -191,8 +314,19 @@ fn detect_and_create_materials(
                         |s: &mut ImageLoaderSettings| s.is_srgb = false,
                     ));
                 }
-                "orm" | "metallic" | "metalness" | "metal" | "mtl" | "roughness" | "rough"
-                | "rgh" => {
+                "orm" => {
+                    let img = asset_server.load_with_settings::<Image, ImageLoaderSettings>(
+                        asset_path.clone(),
+                        |s: &mut ImageLoaderSettings| s.is_srgb = false,
+                    );
+                    if metallic_roughness_texture.is_none() {
+                        metallic_roughness_texture = Some(img.clone());
+                    }
+                    if occlusion_texture.is_none() {
+                        occlusion_texture = Some(img);
+                    }
+                }
+                "metallic" | "metalness" | "metal" | "mtl" | "roughness" | "rough" | "rgh" => {
                     if metallic_roughness_texture.is_none() {
                         metallic_roughness_texture =
                             Some(asset_server.load_with_settings::<Image, ImageLoaderSettings>(
@@ -235,6 +369,8 @@ fn detect_and_create_materials(
             continue;
         }
 
+        let has_depth = depth_map.is_some();
+        let has_mr = metallic_roughness_texture.is_some();
         let handle = materials.add(StandardMaterial {
             base_color_texture,
             normal_map_texture,
@@ -242,6 +378,11 @@ fn detect_and_create_materials(
             emissive_texture,
             occlusion_texture,
             depth_map,
+            metallic: if has_mr { 1.0 } else { 0.0 },
+            perceptual_roughness: if has_mr { 1.0 } else { 0.5 },
+            parallax_depth_scale: if has_depth { 0.05 } else { 0.0 },
+            parallax_mapping_method: bevy::pbr::ParallaxMappingMethod::Occlusion,
+            max_parallax_layer_count: if has_depth { 32.0 } else { 0.0 },
             ..default()
         });
 
@@ -424,9 +565,35 @@ fn save_catalog_if_dirty(world: &mut World) {
     let is_dirty = world
         .get_resource::<crate::asset_catalog::AssetCatalog>()
         .is_some_and(|c| c.dirty);
-    if is_dirty {
-        crate::asset_catalog::save_catalog(world);
+    if !is_dirty {
+        return;
     }
+
+    // Re-serialize all registry materials so in-memory edits persist.
+    let assets_dir = world
+        .get_resource::<crate::project::ProjectRoot>()
+        .map(|p| p.assets_dir())
+        .unwrap_or_default();
+    let entries: Vec<(String, UntypedHandle)> = world
+        .resource::<MaterialRegistry>()
+        .entries
+        .iter()
+        .map(|e| (format!("@{}", e.name), e.handle.clone().untyped()))
+        .collect();
+
+    let mut catalog_assets = world.resource::<crate::asset_catalog::AssetCatalog>().assets.clone();
+    for (catalog_name, handle) in &entries {
+        crate::scene_io::serialize_asset_into(
+            world,
+            handle.clone(),
+            catalog_name,
+            &assets_dir,
+            &mut catalog_assets,
+        );
+    }
+    world.resource_mut::<crate::asset_catalog::AssetCatalog>().assets = catalog_assets;
+
+    crate::asset_catalog::save_catalog(world);
 }
 
 fn apply_material_filter(
@@ -506,8 +673,13 @@ fn update_preview_area(
     mut commands: Commands,
     preview_state: Res<MaterialPreviewState>,
     registry: Res<MaterialRegistry>,
+    materials: Res<Assets<StandardMaterial>>,
     container_query: Query<(Entity, Option<&Children>), With<PreviewAreaContainer>>,
+    dragging_query: Query<(), With<TextEditDragging>>,
+    all_children_query: Query<&Children>,
+    icon_font: Res<icons::IconFont>,
 ) {
+    let icon_font = icon_font.0.clone();
     if !preview_state.is_changed() {
         return;
     }
@@ -515,6 +687,22 @@ fn update_preview_area(
     let Ok((container, children)) = container_query.single() else {
         return;
     };
+
+    // Don't rebuild while a slider drag is in progress — the drag system
+    // has in-flight commands targeting child entities.
+    if let Some(children) = children {
+        for child in children.iter() {
+            // TextEditDragging lives on the wrapper entity (grandchild of container)
+            if dragging_query.contains(child) {
+                return;
+            }
+            if let Ok(grandchildren) = all_children_query.get(child) {
+                if grandchildren.iter().any(|gc| dragging_query.contains(gc)) {
+                    return;
+                }
+            }
+        }
+    }
 
     // Clear existing children
     if let Some(children) = children {
@@ -609,6 +797,314 @@ fn update_preview_area(
             }
         },
     );
+
+    // Material parameter sliders
+    let Some(mat) = materials.get(active_handle) else {
+        return;
+    };
+
+    let has_depth = mat.depth_map.is_some();
+
+    // --- Texture slots section ---
+    // Section header
+    commands.spawn((
+        Text::new("Textures"),
+        TextFont {
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_SECONDARY),
+        Node {
+            margin: UiRect::top(Val::Px(tokens::SPACING_MD)),
+            ..Default::default()
+        },
+        ChildOf(container),
+    ));
+
+    for slot in TextureSlot::ALL {
+        let tex_handle = slot.get_from(mat);
+        let has_tex = tex_handle.is_some();
+
+        let row = commands
+            .spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(tokens::SPACING_XS),
+                    width: Val::Percent(100.0),
+                    margin: UiRect::top(Val::Px(tokens::SPACING_XS)),
+                    ..Default::default()
+                },
+                ChildOf(container),
+            ))
+            .id();
+
+        // Slot label
+        commands.spawn((
+            Text::new(slot.label()),
+            TextFont {
+                font_size: tokens::FONT_SM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_SECONDARY),
+            Node {
+                min_width: Val::Px(140.0),
+                flex_shrink: 0.0,
+                ..Default::default()
+            },
+            ChildOf(row),
+        ));
+
+        // Thumbnail (24x24)
+        if let Some(img) = tex_handle {
+            commands.spawn((
+                ImageNode::new(img),
+                Node {
+                    width: Val::Px(24.0),
+                    height: Val::Px(24.0),
+                    flex_shrink: 0.0,
+                    ..Default::default()
+                },
+                ChildOf(row),
+            ));
+        } else {
+            commands.spawn((
+                Node {
+                    width: Val::Px(24.0),
+                    height: Val::Px(24.0),
+                    flex_shrink: 0.0,
+                    ..Default::default()
+                },
+                BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
+                ChildOf(row),
+            ));
+        }
+
+        // Browse button
+        let browse_handle = active_handle.clone();
+        let browse_btn = commands
+            .spawn((
+                Node {
+                    padding: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_SM)),
+                    ..Default::default()
+                },
+                icons::icon_colored(
+                    icons::Icon::FolderOpen,
+                    tokens::FONT_SM,
+                    icon_font.clone(),
+                    tokens::TEXT_SECONDARY,
+                ),
+                ChildOf(row),
+            ))
+            .id();
+        commands.entity(browse_btn).observe(
+            move |_: On<Pointer<Click>>, mut commands: Commands| {
+                commands.trigger(BrowseTextureSlot {
+                    slot,
+                    material_handle: browse_handle.clone(),
+                });
+            },
+        );
+
+        // Clear button (only if texture exists)
+        if has_tex {
+            let clear_handle = active_handle.clone();
+            let clear_btn = commands
+                .spawn((
+                    Node {
+                        padding: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_SM)),
+                        ..Default::default()
+                    },
+                    icons::icon_colored(
+                        icons::Icon::X,
+                        tokens::FONT_SM,
+                        icon_font.clone(),
+                        tokens::TEXT_SECONDARY,
+                    ),
+                    ChildOf(row),
+                ))
+                .id();
+            commands.entity(clear_btn).observe(
+                move |_: On<Pointer<Click>>, mut commands: Commands| {
+                    commands.trigger(ClearTextureSlot {
+                        slot,
+                        material_handle: clear_handle.clone(),
+                    });
+                },
+            );
+        }
+    }
+
+    // --- Parameters section ---
+    commands.spawn((
+        Text::new("Parameters"),
+        TextFont {
+            font_size: tokens::FONT_SM,
+            ..Default::default()
+        },
+        TextColor(tokens::TEXT_SECONDARY),
+        Node {
+            margin: UiRect::top(Val::Px(tokens::SPACING_MD)),
+            ..Default::default()
+        },
+        ChildOf(container),
+    ));
+
+    // Helper: spawn a label + numeric input row
+    let spawn_param_row = |commands: &mut Commands,
+                                parent: Entity,
+                                label: &str,
+                                value: f32,
+                                min: f64,
+                                max: f64,
+                                param: MaterialParamInput| {
+        let row = commands
+            .spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(tokens::SPACING_XS),
+                    width: Val::Percent(100.0),
+                    margin: UiRect::top(Val::Px(tokens::SPACING_XS)),
+                    ..Default::default()
+                },
+                ChildOf(parent),
+            ))
+            .id();
+
+        commands.spawn((
+            Text::new(label),
+            TextFont {
+                font_size: tokens::FONT_SM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_SECONDARY),
+            Node {
+                min_width: Val::Px(140.0),
+                flex_shrink: 0.0,
+                ..Default::default()
+            },
+            ChildOf(row),
+        ));
+
+        commands.spawn((
+            text_edit::text_edit(
+                TextEditProps::default()
+                    .numeric_f32()
+                    .grow()
+                    .with_min(min)
+                    .with_max(max)
+                    .with_default_value(format!("{value:.3}")),
+            ),
+            param,
+            ChildOf(row),
+        ));
+    };
+
+    if has_depth {
+        spawn_param_row(
+            &mut commands,
+            container,
+            "parallax_depth_scale",
+            mat.parallax_depth_scale,
+            0.0,
+            0.3,
+            MaterialParamInput::ParallaxDepthScale,
+        );
+        spawn_param_row(
+            &mut commands,
+            container,
+            "max_parallax_layer_count",
+            mat.max_parallax_layer_count,
+            4.0,
+            64.0,
+            MaterialParamInput::MaxParallaxLayers,
+        );
+    }
+
+    spawn_param_row(
+        &mut commands,
+        container,
+        "perceptual_roughness",
+        mat.perceptual_roughness,
+        0.0,
+        2.0,
+        MaterialParamInput::PerceptualRoughness,
+    );
+    spawn_param_row(
+        &mut commands,
+        container,
+        "metallic",
+        mat.metallic,
+        0.0,
+        2.0,
+        MaterialParamInput::Metallic,
+    );
+    spawn_param_row(
+        &mut commands,
+        container,
+        "reflectance",
+        mat.reflectance,
+        0.0,
+        1.0,
+        MaterialParamInput::Reflectance,
+    );
+}
+
+/// Handle TextEditCommitEvent for material parameter inputs.
+fn on_material_param_commit(
+    event: On<TextEditCommitEvent>,
+    param_query: Query<&MaterialParamInput>,
+    child_of_query: Query<&ChildOf>,
+    preview_state: Res<MaterialPreviewState>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    registry: Res<MaterialRegistry>,
+    mut catalog: ResMut<crate::asset_catalog::AssetCatalog>,
+) {
+    // Walk up the hierarchy to find a MaterialParamInput marker
+    let mut current = event.entity;
+    let mut param = None;
+    for _ in 0..4 {
+        let Ok(child_of) = child_of_query.get(current) else {
+            break;
+        };
+        if let Ok(p) = param_query.get(child_of.parent()) {
+            param = Some(*p);
+            break;
+        }
+        current = child_of.parent();
+    }
+
+    let Some(param) = param else { return };
+    let Some(ref active_handle) = preview_state.active_material else {
+        return;
+    };
+    let value: f32 = event.text.parse().unwrap_or(0.0);
+
+    let Some(mat) = materials.get_mut(active_handle) else {
+        return;
+    };
+    match param {
+        MaterialParamInput::ParallaxDepthScale => mat.parallax_depth_scale = value,
+        MaterialParamInput::MaxParallaxLayers => mat.max_parallax_layer_count = value,
+        MaterialParamInput::PerceptualRoughness => mat.perceptual_roughness = value,
+        MaterialParamInput::Metallic => mat.metallic = value,
+        MaterialParamInput::Reflectance => mat.reflectance = value,
+    }
+
+    // Persist to catalog
+    let catalog_name = registry
+        .entries
+        .iter()
+        .find(|e| e.handle == *active_handle)
+        .map(|e| format!("@{}", e.name));
+    if let Some(name) = catalog_name {
+        if catalog.contains_name(&name) {
+            catalog.dirty = true;
+        }
+    }
 }
 
 fn spawn_material_folder_dialog(
@@ -645,6 +1141,117 @@ fn poll_material_browser_folder(world: &mut World) {
             **text = path.to_string_lossy().to_string();
         }
     }
+}
+
+fn handle_create_new_material(
+    _: On<CreateNewMaterial>,
+    mut registry: ResMut<MaterialRegistry>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut catalog: ResMut<crate::asset_catalog::AssetCatalog>,
+    mut preview_state: ResMut<MaterialPreviewState>,
+) {
+    // Generate a unique name
+    let mut idx = 1u32;
+    let name = loop {
+        let candidate = format!("Material_{idx}");
+        if registry.get_by_name(&candidate).is_none() {
+            break candidate;
+        }
+        idx += 1;
+    };
+
+    let handle = materials.add(StandardMaterial::default());
+    let catalog_name = format!("@{name}");
+    catalog.insert(catalog_name, handle.clone().untyped());
+    catalog.dirty = true;
+    registry.add(name, handle.clone());
+    preview_state.active_material = Some(handle);
+    preview_state.orbit_yaw = 0.5;
+    preview_state.orbit_pitch = -0.3;
+    preview_state.zoom_distance = 3.0;
+}
+
+fn handle_browse_texture_slot(
+    event: On<BrowseTextureSlot>,
+    mut commands: Commands,
+    existing_task: Option<Res<TextureSlotPickTask>>,
+    raw_handle: Query<&RawHandleWrapper, With<PrimaryWindow>>,
+) {
+    if existing_task.is_some() {
+        return;
+    }
+    let slot = event.slot;
+    let material_handle = event.material_handle.clone();
+    let mut dialog = AsyncFileDialog::new()
+        .set_title(format!("Select image for {}", slot.label()))
+        .add_filter(
+            "Images",
+            &["png", "jpg", "jpeg", "ktx2", "bmp", "tga", "webp"],
+        );
+    if let Ok(rh) = raw_handle.single() {
+        let handle = unsafe { rh.get_handle() };
+        dialog = dialog.set_parent(&handle);
+    }
+    let task = AsyncComputeTaskPool::get().spawn(async move { dialog.pick_file().await });
+    commands.insert_resource(TextureSlotPickTask {
+        task,
+        slot,
+        material_handle,
+    });
+}
+
+fn poll_texture_slot_pick(world: &mut World) {
+    let Some(mut task_res) = world.get_resource_mut::<TextureSlotPickTask>() else {
+        return;
+    };
+    let Some(result) = future::block_on(future::poll_once(&mut task_res.task)) else {
+        return;
+    };
+    let slot = task_res.slot;
+    let material_handle = task_res.material_handle.clone();
+    world.remove_resource::<TextureSlotPickTask>();
+
+    let Some(file_handle) = result else {
+        return;
+    };
+    let path = file_handle.path().to_path_buf();
+
+    // Skip 16-bit PNGs for DepthMap
+    if slot == TextureSlot::DepthMap && is_16bit_png(&path) {
+        return;
+    }
+
+    let asset_path = path.to_string_lossy().replace('\\', "/");
+    let asset_server = world.resource::<AssetServer>().clone();
+    let image_handle = if slot.is_srgb() {
+        asset_server.load::<Image>(asset_path)
+    } else {
+        asset_server.load_with_settings::<Image, ImageLoaderSettings>(
+            asset_path,
+            |s: &mut ImageLoaderSettings| s.is_srgb = false,
+        )
+    };
+
+    let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+    if let Some(mat) = materials.get_mut(&material_handle) {
+        slot.set_on(mat, Some(image_handle));
+    }
+
+    world.resource_mut::<crate::asset_catalog::AssetCatalog>().dirty = true;
+    world.resource_mut::<MaterialPreviewState>().set_changed();
+}
+
+fn handle_clear_texture_slot(
+    event: On<ClearTextureSlot>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut catalog: ResMut<crate::asset_catalog::AssetCatalog>,
+    mut preview_state: ResMut<MaterialPreviewState>,
+) {
+    if let Some(mat) = materials.get_mut(&event.material_handle) {
+        event.slot.set_on(mat, None);
+    }
+    catalog.dirty = true;
+    preview_state.set_changed();
 }
 
 fn update_material_browser_ui(
@@ -850,6 +1457,7 @@ pub fn material_browser_panel(icon_font: Handle<Font>) -> impl Bundle {
                             ..Default::default()
                         },
                         children![
+                            new_material_button(icon_font.clone()),
                             material_folder_button(icon_font.clone()),
                             rescan_button(icon_font),
                         ],
@@ -864,7 +1472,9 @@ pub fn material_browser_panel(icon_font: Handle<Font>) -> impl Bundle {
                     flex_direction: FlexDirection::Column,
                     width: Val::Percent(100.0),
                     padding: UiRect::all(Val::Px(tokens::SPACING_SM)),
-                    flex_shrink: 0.0,
+                    flex_shrink: 1.0,
+                    min_height: Val::Px(0.0),
+                    overflow: Overflow::scroll_y(),
                     ..Default::default()
                 },
             ),
@@ -903,6 +1513,27 @@ pub fn material_browser_panel(icon_font: Handle<Font>) -> impl Bundle {
                 },
             ),
         ],
+    )
+}
+
+fn new_material_button(icon_font: Handle<Font>) -> impl Bundle {
+    (
+        Node {
+            padding: UiRect::all(Val::Px(tokens::SPACING_XS)),
+            border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_SM)),
+            ..Default::default()
+        },
+        icons::icon_colored(
+            icons::Icon::Plus,
+            tokens::FONT_MD,
+            icon_font,
+            tokens::TEXT_SECONDARY,
+        ),
+        observe(
+            |_: On<Pointer<Click>>, mut commands: Commands| {
+                commands.trigger(CreateNewMaterial);
+            },
+        ),
     )
 }
 

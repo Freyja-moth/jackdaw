@@ -42,7 +42,14 @@ pub fn setup_material_preview_scene(
 ) {
     let preview_layer = RenderLayers::layer(PREVIEW_LAYER);
 
-    let sphere = meshes.add(Sphere::new(1.0).mesh().ico(5).unwrap());
+    let sphere = meshes.add(
+        Sphere::new(1.0)
+            .mesh()
+            .ico(5)
+            .unwrap()
+            .with_generated_tangents()
+            .unwrap(),
+    );
     let mat = materials.add(StandardMaterial::default());
 
     commands.spawn((

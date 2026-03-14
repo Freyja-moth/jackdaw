@@ -1,0 +1,8 @@
+[book]
+authors = ["jbuehler23"]
+language = "en"
+src = "src"
+title = "Jackdaw - A Bevy Editor"
+
+[output.html]
+git-repository-url = "https://github.com/jbuehler23/jackdaw"

@@ -27,6 +27,7 @@ impl Plugin for ViewportOverlaysPlugin {
                     draw_dir_light_gizmo,
                     draw_camera_gizmo,
                 )
+                    .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
                     .run_if(in_state(crate::AppState::Editor)),
             )
             .add_systems(
@@ -73,7 +74,10 @@ impl Default for OverlaySettings {
 fn draw_selection_bounding_boxes(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    selected: Query<(Entity, &GlobalTransform, Option<&BrushMeshCache>), With<Selected>>,
+    selected: Query<
+        (Entity, &GlobalTransform, Option<&BrushMeshCache>, &InheritedVisibility),
+        With<Selected>,
+    >,
     children_query: Query<&Children>,
     mesh_query: Query<(&Mesh3d, &GlobalTransform)>,
     meshes: Res<Assets<Mesh>>,
@@ -84,7 +88,10 @@ fn draw_selection_bounding_boxes(
 
     let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
 
-    for (entity, global_tf, maybe_brush_cache) in &selected {
+    for (entity, global_tf, maybe_brush_cache, inherited_vis) in &selected {
+        if !inherited_vis.get() {
+            continue;
+        }
         // Collect world-space vertices
         let world_verts = if let Some(cache) = maybe_brush_cache {
             if cache.vertices.is_empty() {
@@ -245,13 +252,16 @@ pub(crate) fn collect_descendant_mesh_world_vertices(
 fn draw_point_light_gizmo(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    query: Query<(&PointLight, &GlobalTransform), With<Selected>>,
+    query: Query<(&PointLight, &GlobalTransform, &InheritedVisibility), With<Selected>>,
 ) {
     if !settings.show_bounding_boxes {
         return;
     }
     let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
-    for (light, tf) in &query {
+    for (light, tf, inherited_vis) in &query {
+        if !inherited_vis.get() {
+            continue;
+        }
         let pos = tf.translation();
         gizmos.circle(
             Isometry3d::new(pos, Quat::from_rotation_x(FRAC_PI_2)),
@@ -271,13 +281,16 @@ fn draw_point_light_gizmo(
 fn draw_spot_light_gizmo(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    query: Query<(&SpotLight, &GlobalTransform), With<Selected>>,
+    query: Query<(&SpotLight, &GlobalTransform, &InheritedVisibility), With<Selected>>,
 ) {
     if !settings.show_bounding_boxes {
         return;
     }
     let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
-    for (light, tf) in &query {
+    for (light, tf, inherited_vis) in &query {
+        if !inherited_vis.get() {
+            continue;
+        }
         let pos = tf.translation();
         let fwd = tf.forward().as_vec3();
         let right = tf.right().as_vec3();
@@ -302,13 +315,16 @@ fn draw_spot_light_gizmo(
 fn draw_dir_light_gizmo(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    query: Query<&GlobalTransform, (With<DirectionalLight>, With<Selected>)>,
+    query: Query<(&GlobalTransform, &InheritedVisibility), (With<DirectionalLight>, With<Selected>)>,
 ) {
     if !settings.show_bounding_boxes {
         return;
     }
     let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
-    for tf in &query {
+    for (tf, inherited_vis) in &query {
+        if !inherited_vis.get() {
+            continue;
+        }
         let pos = tf.translation();
         let dir = tf.forward().as_vec3();
         gizmos.arrow(pos, pos + dir * 2.0, color);
@@ -319,13 +335,16 @@ fn draw_dir_light_gizmo(
 fn draw_camera_gizmo(
     mut gizmos: Gizmos,
     settings: Res<OverlaySettings>,
-    query: Query<(&Projection, &GlobalTransform), With<Selected>>,
+    query: Query<(&Projection, &GlobalTransform, &InheritedVisibility), With<Selected>>,
 ) {
     if !settings.show_bounding_boxes {
         return;
     }
     let color = Color::srgba(1.0, 1.0, 0.0, 0.8);
-    for (projection, tf) in &query {
+    for (projection, tf, inherited_vis) in &query {
+        if !inherited_vis.get() {
+            continue;
+        }
         let Projection::Perspective(proj) = projection else {
             continue;
         };

@@ -8,9 +8,14 @@ use crate::{
 use bevy::input_focus::InputFocus;
 use bevy::{
     picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility},
+    picking::prelude::Pickable,
     prelude::*,
     ui::UiGlobalTransform,
 };
+
+/// Marker for the box-select visual overlay node.
+#[derive(Component)]
+struct BoxSelectOverlay;
 
 pub struct ViewportSelectPlugin;
 
@@ -18,7 +23,8 @@ impl Plugin for ViewportSelectPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BoxSelectState>().add_systems(
             Update,
-            (handle_viewport_click, handle_box_select).in_set(crate::EditorInteraction),
+            (handle_viewport_click, handle_box_select, update_box_select_overlay)
+                .in_set(crate::EditorInteraction),
         );
     }
 }
@@ -179,7 +185,7 @@ fn handle_box_select(
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     gizmo_drag: Res<GizmoDragState>,
     edit_mode: Res<crate::brush::EditMode>,
-    scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
+    scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Name>)>,
     mut selection: ResMut<Selection>,
     mut commands: Commands,
 ) {
@@ -251,6 +257,45 @@ fn handle_box_select(
             if !selected_entities.is_empty() {
                 selection.select_multiple(&mut commands, &selected_entities);
             }
+        }
+    }
+}
+
+fn update_box_select_overlay(
+    box_state: Res<BoxSelectState>,
+    overlay_query: Query<Entity, With<BoxSelectOverlay>>,
+    mut commands: Commands,
+) {
+    if box_state.active {
+        let min = box_state.start.min(box_state.current);
+        let max = box_state.start.max(box_state.current);
+        let size = max - min;
+
+        let node = (
+            BoxSelectOverlay,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(min.x),
+                top: Val::Px(min.y),
+                width: Val::Px(size.x),
+                height: Val::Px(size.y),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.3, 0.5, 1.0, 0.1)),
+            BorderColor::all(Color::srgba(0.3, 0.5, 1.0, 0.7)),
+            GlobalZIndex(50),
+            Pickable::IGNORE,
+        );
+
+        if let Some(entity) = overlay_query.iter().next() {
+            commands.entity(entity).insert(node);
+        } else {
+            commands.spawn(node);
+        }
+    } else {
+        for entity in &overlay_query {
+            commands.entity(entity).despawn();
         }
     }
 }

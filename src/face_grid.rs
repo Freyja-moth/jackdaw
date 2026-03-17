@@ -24,6 +24,7 @@ impl Plugin for FaceGridPlugin {
                 PostUpdate,
                 (draw_brush_edges, draw_face_grids)
                     .after(bevy::transform::TransformSystems::Propagate)
+                    .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
                     .run_if(in_state(crate::AppState::Editor)),
             );
     }
@@ -38,13 +39,19 @@ fn configure_face_grid_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
 fn draw_brush_edges(
     mut gizmos: Gizmos<FaceGridGizmoGroup>,
     settings: Res<OverlaySettings>,
-    brushes: Query<(&BrushMeshCache, &GlobalTransform, Has<Selected>), Without<CutPreviewHidden>>,
+    brushes: Query<
+        (&BrushMeshCache, &GlobalTransform, Has<Selected>, &InheritedVisibility),
+        Without<CutPreviewHidden>,
+    >,
 ) {
     if !settings.show_brush_wireframe {
         return;
     }
 
-    for (cache, global_tf, is_selected) in &brushes {
+    for (cache, global_tf, is_selected, inherited_vis) in &brushes {
+        if !inherited_vis.get() {
+            continue;
+        }
         let color: Color = if is_selected {
             tailwind::CYAN_400.into()
         } else {
@@ -73,7 +80,13 @@ fn draw_face_grids(
     settings: Res<OverlaySettings>,
     snap: Res<SnapSettings>,
     brushes: Query<
-        (&Brush, &BrushMeshCache, &GlobalTransform, Has<Selected>),
+        (
+            &Brush,
+            &BrushMeshCache,
+            &GlobalTransform,
+            Has<Selected>,
+            &InheritedVisibility,
+        ),
         Without<CutPreviewHidden>,
     >,
 ) {
@@ -83,7 +96,10 @@ fn draw_face_grids(
 
     let grid_size = snap.grid_size();
 
-    for (brush, cache, global_tf, is_selected) in &brushes {
+    for (brush, cache, global_tf, is_selected, inherited_vis) in &brushes {
+        if !inherited_vis.get() {
+            continue;
+        }
         let color = if is_selected {
             Color::from(tailwind::GRAY_600).with_alpha(0.5)
         } else {

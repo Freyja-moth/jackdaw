@@ -731,12 +731,19 @@ fn handle_drag_value(
                         text,
                     });
                 }
-                commands
-                    .entity(child_of.parent())
-                    .remove::<TextEditDragging>();
+                let parent = child_of.parent();
+                commands.queue(move |world: &mut World| {
+                    if let Ok(mut ec) = world.get_entity_mut(parent) {
+                        ec.remove::<TextEditDragging>();
+                    }
+                });
             }
             hitbox.dragging = false;
-            commands.entity(entity).remove::<ActiveCursor>();
+            commands.queue(move |world: &mut World| {
+                if let Ok(mut ec) = world.get_entity_mut(entity) {
+                    ec.remove::<ActiveCursor>();
+                }
+            });
         }
 
         if hitbox.dragging {

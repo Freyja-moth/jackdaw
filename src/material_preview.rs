@@ -54,6 +54,7 @@ pub fn setup_material_preview_scene(
 
     commands.spawn((
         PreviewSphere,
+        crate::EditorEntity,
         Mesh3d(sphere),
         MeshMaterial3d(mat),
         Transform::default(),
@@ -62,6 +63,7 @@ pub fn setup_material_preview_scene(
     ));
 
     commands.spawn((
+        crate::EditorEntity,
         DirectionalLight {
             illuminance: 5000.0,
             ..default()
@@ -73,6 +75,7 @@ pub fn setup_material_preview_scene(
 
     // Fill light from opposite direction for balanced preview
     commands.spawn((
+        crate::EditorEntity,
         DirectionalLight {
             illuminance: 2000.0,
             shadows_enabled: false,
@@ -94,6 +97,7 @@ pub fn setup_material_preview_scene(
 
     commands.spawn((
         PreviewCamera,
+        crate::EditorEntity,
         Camera3d::default(),
         Camera {
             order: -1,

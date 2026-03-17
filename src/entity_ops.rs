@@ -345,6 +345,56 @@ pub fn duplicate_selected(world: &mut World) {
     }
 }
 
+/// Snap a vector to the nearest cardinal world axis (±X, ±Y, ±Z).
+/// Returns a signed unit vector along the axis with the largest absolute component.
+fn snap_to_nearest_axis(v: Vec3) -> Vec3 {
+    let abs = v.abs();
+    if abs.x >= abs.y && abs.x >= abs.z {
+        Vec3::new(v.x.signum(), 0.0, 0.0)
+    } else if abs.y >= abs.x && abs.y >= abs.z {
+        Vec3::new(0.0, v.y.signum(), 0.0)
+    } else {
+        Vec3::new(0.0, 0.0, v.z.signum())
+    }
+}
+
+/// Derive TrenchBroom-style rotation axes from the camera transform.
+///
+/// - **Yaw** (left/right arrows): always world Y — vertical rotation is always intuitive.
+/// - **Roll** (up/down arrows): camera forward projected to horizontal, snapped to nearest
+///   world axis, then negated. This is the axis you're "looking along".
+/// - **Pitch** (PageUp/PageDown): camera right snapped to nearest world axis. If it
+///   collides with the roll axis, use the cross product with Y instead.
+fn camera_snapped_rotation_axes(gt: &GlobalTransform) -> (Vec3, Vec3, Vec3) {
+    let yaw_axis = Vec3::Y;
+
+    // Forward projected onto the horizontal plane, snapped to nearest axis
+    let fwd = gt.forward().as_vec3();
+    let fwd_horiz = Vec3::new(fwd.x, 0.0, fwd.z);
+    let roll_axis = if fwd_horiz.length_squared() > 1e-6 {
+        -snap_to_nearest_axis(fwd_horiz)
+    } else {
+        // Looking straight down/up — use camera up projected horizontally instead
+        let up = gt.up().as_vec3();
+        let up_horiz = Vec3::new(up.x, 0.0, up.z);
+        if up_horiz.length_squared() > 1e-6 {
+            snap_to_nearest_axis(up_horiz)
+        } else {
+            Vec3::NEG_Z
+        }
+    };
+
+    // Right snapped to nearest axis, with deduplication against roll
+    let right = gt.right().as_vec3();
+    let mut pitch_axis = snap_to_nearest_axis(right);
+    if pitch_axis.abs() == roll_axis.abs() {
+        // Collision — derive perpendicular horizontal axis
+        pitch_axis = snap_to_nearest_axis(yaw_axis.cross(roll_axis));
+    }
+
+    (yaw_axis, roll_axis, pitch_axis)
+}
+
 fn handle_entity_keys(world: &mut World) {
     // Don't process entity keys when a text input is focused
     let has_input_focus = world.resource::<InputFocus>().0.is_some();
@@ -389,7 +439,9 @@ fn handle_entity_keys(world: &mut World) {
     let reset_pos = keybinds.just_pressed(EditorAction::ResetPosition, keyboard);
     let reset_rot = keybinds.just_pressed(EditorAction::ResetRotation, keyboard);
     let reset_scale = keybinds.just_pressed(EditorAction::ResetScale, keyboard);
-    let toggle_vis = keybinds.just_pressed(EditorAction::ToggleVisibility, keyboard);
+    let do_hide_selected = keybinds.just_pressed(EditorAction::ToggleVisibility, keyboard);
+    let unhide_all = keybinds.just_pressed(EditorAction::UnhideAll, keyboard);
+    let hide_unselected = keybinds.just_pressed(EditorAction::HideAll, keyboard);
 
     // Rotations (Alt+Arrow/PageUp/Down)
     let rot_left = keybinds.just_pressed(EditorAction::Rotate90Left, keyboard);
@@ -425,22 +477,40 @@ fn handle_entity_keys(world: &mut World) {
         reset_transform_selected(world, TransformReset::Rotation);
     } else if reset_scale {
         reset_transform_selected(world, TransformReset::Scale);
-    } else if toggle_vis {
-        toggle_visibility_selected(world);
+    } else if unhide_all {
+        unhide_all_entities(world);
+    } else if hide_unselected {
+        hide_all_entities(world);
+    } else if do_hide_selected {
+        hide_selected(world);
     } else if any_rotation {
+        // TrenchBroom-style rotation: snap camera axes to the nearest world axis
+        // so rotations always produce axis-aligned results while still feeling
+        // intuitive from the current viewpoint.
+        let (yaw_axis, roll_axis, pitch_axis) = {
+            let mut cam_query =
+                world.query_filtered::<&GlobalTransform, With<crate::viewport::MainViewportCamera>>();
+            cam_query
+                .iter(world)
+                .next()
+                .map(|gt| camera_snapped_rotation_axes(gt))
+                .unwrap_or((Vec3::Y, Vec3::NEG_Z, Vec3::X))
+        };
+
+        let angle = std::f32::consts::FRAC_PI_2;
         let rotation = if rot_left {
-            Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2)
+            Quat::from_axis_angle(yaw_axis, -angle)
         } else if rot_right {
-            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
+            Quat::from_axis_angle(yaw_axis, angle)
         } else if rot_up {
-            Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+            Quat::from_axis_angle(roll_axis, -angle)
         } else if rot_down {
-            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)
+            Quat::from_axis_angle(roll_axis, angle)
         } else if roll_left {
-            Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
+            Quat::from_axis_angle(pitch_axis, angle)
         } else {
             // roll_right
-            Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)
+            Quat::from_axis_angle(pitch_axis, -angle)
         };
         rotate_selected(world, rotation);
     } else if any_nudge {
@@ -717,7 +787,7 @@ fn paste_components(world: &mut World) {
     }
 }
 
-fn toggle_visibility_selected(world: &mut World) {
+fn hide_selected(world: &mut World) {
     let selection = world.resource::<Selection>();
     let entities: Vec<Entity> = selection.entities.clone();
 
@@ -753,6 +823,86 @@ fn toggle_visibility_selected(world: &mut World) {
         let group = crate::commands::CommandGroup {
             commands: cmds,
             label: "Toggle visibility".to_string(),
+        };
+        let mut history = world.resource_mut::<CommandHistory>();
+        history.undo_stack.push(Box::new(group));
+        history.redo_stack.clear();
+    }
+}
+
+fn unhide_all_entities(world: &mut World) {
+    let mut cmds: Vec<Box<dyn EditorCommand>> = Vec::new();
+
+    // Only unhide top-level scene entities (with Name), matching hide_unselected logic.
+    let hidden: Vec<Entity> = {
+        let mut query = world.query_filtered::<(Entity, &Visibility), (
+            With<Name>,
+            Without<EditorEntity>,
+            Without<Node>,
+        )>();
+        query
+            .iter(world)
+            .filter(|(_, vis)| **vis == Visibility::Hidden)
+            .map(|(e, _)| e)
+            .collect()
+    };
+
+    for entity in hidden {
+        let cmd = crate::commands::SetComponentField {
+            entity,
+            component_type_id: std::any::TypeId::of::<Visibility>(),
+            field_path: String::new(),
+            old_value: Box::new(Visibility::Hidden),
+            new_value: Box::new(Visibility::Inherited),
+        };
+        cmd.execute(world);
+        cmds.push(Box::new(cmd));
+    }
+
+    if !cmds.is_empty() {
+        let group = crate::commands::CommandGroup {
+            commands: cmds,
+            label: "Unhide all".to_string(),
+        };
+        let mut history = world.resource_mut::<CommandHistory>();
+        history.undo_stack.push(Box::new(group));
+        history.redo_stack.clear();
+    }
+}
+
+fn hide_all_entities(world: &mut World) {
+    let mut cmds: Vec<Box<dyn EditorCommand>> = Vec::new();
+
+    // Hide all top-level scene entities (same filter as H, applied to everything).
+    let to_hide: Vec<(Entity, Visibility)> = {
+        let mut query = world.query_filtered::<(Entity, &Visibility), (
+            With<Name>,
+            Without<EditorEntity>,
+            Without<Node>,
+        )>();
+        query
+            .iter(world)
+            .filter(|(_, vis)| **vis != Visibility::Hidden)
+            .map(|(e, vis)| (e, *vis))
+            .collect()
+    };
+
+    for (entity, current) in to_hide {
+        let cmd = crate::commands::SetComponentField {
+            entity,
+            component_type_id: std::any::TypeId::of::<Visibility>(),
+            field_path: String::new(),
+            old_value: Box::new(current),
+            new_value: Box::new(Visibility::Hidden),
+        };
+        cmd.execute(world);
+        cmds.push(Box::new(cmd));
+    }
+
+    if !cmds.is_empty() {
+        let group = crate::commands::CommandGroup {
+            commands: cmds,
+            label: "Hide all".to_string(),
         };
         let mut history = world.resource_mut::<CommandHistory>();
         history.undo_stack.push(Box::new(group));

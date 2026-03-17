@@ -21,6 +21,8 @@ pub enum EditorAction {
     CopyComponents,
     PasteComponents,
     ToggleVisibility,
+    UnhideAll,
+    HideAll,
     ResetPosition,
     ResetRotation,
     ResetScale,
@@ -144,7 +146,9 @@ impl fmt::Display for EditorAction {
             Self::Duplicate => "Duplicate",
             Self::CopyComponents => "Copy Components",
             Self::PasteComponents => "Paste Components",
-            Self::ToggleVisibility => "Toggle Visibility",
+            Self::ToggleVisibility => "Hide Selected",
+            Self::UnhideAll => "Unhide All",
+            Self::HideAll => "Hide All",
             Self::ResetPosition => "Reset Position",
             Self::ResetRotation => "Reset Rotation",
             Self::ResetScale => "Reset Scale",
@@ -242,7 +246,9 @@ impl EditorAction {
             "Duplicate" => Some(Self::Duplicate),
             "Copy Components" => Some(Self::CopyComponents),
             "Paste Components" => Some(Self::PasteComponents),
-            "Toggle Visibility" => Some(Self::ToggleVisibility),
+            "Hide Selected" | "Toggle Visibility" => Some(Self::ToggleVisibility),
+            "Unhide All" => Some(Self::UnhideAll),
+            "Hide All" => Some(Self::HideAll),
             "Reset Position" => Some(Self::ResetPosition),
             "Reset Rotation" => Some(Self::ResetRotation),
             "Reset Scale" => Some(Self::ResetScale),
@@ -336,6 +342,8 @@ impl EditorAction {
             | Self::CopyComponents
             | Self::PasteComponents
             | Self::ToggleVisibility
+            | Self::UnhideAll
+            | Self::HideAll
             | Self::ResetPosition
             | Self::ResetRotation
             | Self::ResetScale => "Entity",
@@ -432,6 +440,8 @@ impl EditorAction {
             A::CopyComponents,
             A::PasteComponents,
             A::ToggleVisibility,
+            A::UnhideAll,
+            A::HideAll,
             A::ResetPosition,
             A::ResetRotation,
             A::ResetScale,
@@ -902,6 +912,8 @@ impl Default for KeybindRegistry {
         bindings.insert(A::CopyComponents, b(K::KeyC, true, false, false));
         bindings.insert(A::PasteComponents, b(K::KeyV, true, false, false));
         bindings.insert(A::ToggleVisibility, k(K::KeyH));
+        bindings.insert(A::UnhideAll, b(K::KeyH, true, false, false));
+        bindings.insert(A::HideAll, b(K::KeyH, false, false, true));
         bindings.insert(A::ResetPosition, b(K::KeyG, false, false, true));
         bindings.insert(A::ResetRotation, b(K::KeyR, false, false, true));
         bindings.insert(A::ResetScale, b(K::KeyS, false, false, true));

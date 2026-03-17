@@ -22,12 +22,18 @@ const DEFAULT_VIEWPORT_HEIGHT: u32 = 720;
 #[derive(Component)]
 pub struct SceneViewport;
 
+/// Tracks whether a right-click fly session started inside the viewport.
+/// While active, the camera keeps responding even when the cursor leaves the viewport.
+#[derive(Resource, Default)]
+pub struct CameraFlyActive(pub bool);
+
 pub struct ViewportPlugin;
 
 impl Plugin for ViewportPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((JackdawCameraPlugin, InfiniteGridPlugin))
             .init_resource::<CameraBookmarks>()
+            .init_resource::<CameraFlyActive>()
             .add_systems(
                 OnEnter(crate::AppState::Editor),
                 setup_viewport.after(crate::spawn_layout),
@@ -224,15 +230,15 @@ fn update_camera_enabled(
     modal: Res<crate::modal_transform::ModalTransformState>,
     input_focus: Res<bevy::input_focus::InputFocus>,
     blockers: Query<(), With<crate::BlocksCameraInput>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut fly_state: ResMut<CameraFlyActive>,
 ) {
+    // Track right-click fly state
+    if mouse.just_released(MouseButton::Right) {
+        fly_state.0 = false;
+    }
+
     let Ok(window) = windows.single() else {
-        return;
-    };
-    let Some(cursor_pos) = window.cursor_position() else {
-        // Cursor outside window — disable
-        for mut settings in &mut camera_query {
-            settings.enabled = false;
-        }
         return;
     };
 
@@ -243,15 +249,23 @@ fn update_camera_enabled(
     let vp_top_left = vp_pos - vp_size / 2.0;
     let vp_bottom_right = vp_pos + vp_size / 2.0;
 
-    let hovered = cursor_pos.x >= vp_top_left.x
-        && cursor_pos.x <= vp_bottom_right.x
-        && cursor_pos.y >= vp_top_left.y
-        && cursor_pos.y <= vp_bottom_right.y;
+    let hovered = window.cursor_position().is_some_and(|cursor_pos| {
+        cursor_pos.x >= vp_top_left.x
+            && cursor_pos.x <= vp_bottom_right.x
+            && cursor_pos.y >= vp_top_left.y
+            && cursor_pos.y <= vp_bottom_right.y
+    });
+
+    // Start fly when right-click begins while hovering the viewport
+    if mouse.just_pressed(MouseButton::Right) && hovered {
+        fly_state.0 = true;
+    }
 
     let modal_active = modal.active.is_some();
     let text_focused = input_focus.0.is_some();
     let overlay_blocking = !blockers.is_empty();
-    let should_enable = hovered && !modal_active && !text_focused && !overlay_blocking;
+    let should_enable =
+        (hovered || fly_state.0) && !modal_active && !text_focused && !overlay_blocking;
 
     for mut settings in &mut camera_query {
         settings.enabled = should_enable;

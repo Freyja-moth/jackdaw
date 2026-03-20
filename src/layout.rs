@@ -3,6 +3,7 @@ use bevy::{
         theme::{ThemeBackgroundColor, ThemedText},
         tokens as bevy_tokens,
     },
+    picking::hover::Hovered,
     prelude::*,
     ui_widgets::observe,
 };
@@ -15,7 +16,8 @@ use jackdaw_feathers::{
 };
 
 use crate::{
-    EditorEntity, asset_browser,
+    EditorEntity,
+    asset_browser::{self, ActiveTooltip},
     brush::{BrushEditMode, BrushSelection, EditMode},
     draw_brush::DrawBrushState,
     gizmos::{GizmoMode, GizmoSpace},
@@ -77,6 +79,10 @@ pub enum EditToolButton {
     Face,
     Clip,
 }
+
+/// Stores tooltip text for toolbar buttons (used with `Hovered` component).
+#[derive(Component)]
+pub struct ToolbarTooltip(pub String);
 
 /// Marker for keybind helper button
 #[derive(Component)]
@@ -263,6 +269,7 @@ fn viewport_with_toolbar(icon_font: Handle<Font>) -> impl Bundle {
         Node {
             height: percent(100),
             flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip(),
             ..Default::default()
         },
         children![
@@ -292,9 +299,9 @@ fn toolbar(icon_font: Handle<Font>) -> impl Bundle {
         BackgroundColor(tokens::TOOLBAR_BG),
         children![
             // Gizmo mode buttons
-            toolbar_button(Icon::Move, "", GizmoMode::Translate, icon_font.clone()),
-            toolbar_button(Icon::RotateCw, "R", GizmoMode::Rotate, icon_font.clone()),
-            toolbar_button(Icon::Scaling, "T", GizmoMode::Scale, icon_font.clone()),
+            toolbar_button(Icon::Move, "", GizmoMode::Translate, icon_font.clone(), "Move (Esc)"),
+            toolbar_button(Icon::RotateCw, "R", GizmoMode::Rotate, icon_font.clone(), "Rotate (R)"),
+            toolbar_button(Icon::Scaling, "T", GizmoMode::Scale, icon_font.clone(), "Scale (T)"),
             // Separator
             separator::separator(separator::SeparatorProps::vertical()),
             // Space toggle
@@ -302,12 +309,12 @@ fn toolbar(icon_font: Handle<Font>) -> impl Bundle {
             // Separator
             separator::separator(separator::SeparatorProps::vertical()),
             // Edit mode buttons
-            toolbar_edit_button(Icon::MousePointer, EditToolButton::Object, f.clone()),
-            toolbar_edit_button(Icon::Box, EditToolButton::Draw, f.clone()),
-            toolbar_edit_button(Icon::CircleDot, EditToolButton::Vertex, f.clone()),
-            toolbar_edit_button(Icon::GitCommitHorizontal, EditToolButton::Edge, f.clone()),
-            toolbar_edit_button(Icon::Hexagon, EditToolButton::Face, f.clone()),
-            toolbar_edit_button(Icon::ScissorsLineDashed, EditToolButton::Clip, f.clone()),
+            toolbar_edit_button(Icon::MousePointer, EditToolButton::Object, f.clone(), "Object Mode"),
+            toolbar_edit_button(Icon::Box, EditToolButton::Draw, f.clone(), "Draw Brush (B)"),
+            toolbar_edit_button(Icon::CircleDot, EditToolButton::Vertex, f.clone(), "Vertex Mode (1)"),
+            toolbar_edit_button(Icon::GitCommitHorizontal, EditToolButton::Edge, f.clone(), "Edge Mode (2)"),
+            toolbar_edit_button(Icon::Hexagon, EditToolButton::Face, f.clone(), "Face Mode (3)"),
+            toolbar_edit_button(Icon::ScissorsLineDashed, EditToolButton::Clip, f.clone(), "Clip Mode (4)"),
             // Spacer pushes help button to the right
             (Node {
                 flex_grow: 1.0,
@@ -319,10 +326,18 @@ fn toolbar(icon_font: Handle<Font>) -> impl Bundle {
     )
 }
 
-fn toolbar_button(icon: Icon, label: &str, mode: GizmoMode, font: Handle<Font>) -> impl Bundle {
+fn toolbar_button(
+    icon: Icon,
+    label: &str,
+    mode: GizmoMode,
+    font: Handle<Font>,
+    tooltip: &str,
+) -> impl Bundle {
     let label = label.to_string();
     (
         GizmoModeButton(mode),
+        Hovered::default(),
+        ToolbarTooltip(tooltip.into()),
         Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
@@ -362,6 +377,8 @@ fn toolbar_button(icon: Icon, label: &str, mode: GizmoMode, font: Handle<Font>) 
 fn toolbar_space_button(icon_font: Handle<Font>) -> impl Bundle {
     (
         GizmoSpaceButton,
+        Hovered::default(),
+        ToolbarTooltip("Toggle World/Local (X)".into()),
         Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
@@ -399,9 +416,16 @@ fn toolbar_space_button(icon_font: Handle<Font>) -> impl Bundle {
     )
 }
 
-fn toolbar_edit_button(icon: Icon, tool: EditToolButton, font: Handle<Font>) -> impl Bundle {
+fn toolbar_edit_button(
+    icon: Icon,
+    tool: EditToolButton,
+    font: Handle<Font>,
+    tooltip: &str,
+) -> impl Bundle {
     (
         tool,
+        Hovered::default(),
+        ToolbarTooltip(tooltip.into()),
         Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
@@ -750,6 +774,7 @@ fn entity_heiarchy(icon_font: Handle<Font>) -> impl Bundle {
         Node {
             height: percent(100),
             flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip(),
             ..Default::default()
         },
         BackgroundColor(tokens::PANEL_BG),
@@ -858,6 +883,43 @@ pub fn update_toolbar_highlights(
         } else {
             tokens::TOOLBAR_BUTTON_BG
         };
+    }
+}
+
+/// Shows/hides toolbar tooltips based on `Hovered` state (flicker-free).
+pub fn update_toolbar_tooltips(
+    buttons: Query<(Entity, &ToolbarTooltip, &Hovered), Changed<Hovered>>,
+    mut commands: Commands,
+    mut active: ResMut<ActiveTooltip>,
+) {
+    for (entity, tooltip, hovered) in &buttons {
+        if hovered.get() {
+            if let Some(old) = active.0.take() {
+                commands.entity(old).try_despawn();
+            }
+            let tip = commands
+                .spawn(popover::popover(
+                    popover::PopoverProps::new(entity)
+                        .with_placement(popover::PopoverPlacement::Bottom)
+                        .with_padding(4.0)
+                        .with_z_index(300),
+                ))
+                .id();
+            commands.spawn((
+                Text::new(tooltip.0.clone()),
+                TextFont {
+                    font_size: tokens::FONT_SM,
+                    ..Default::default()
+                },
+                TextColor(tokens::TEXT_PRIMARY),
+                ChildOf(tip),
+            ));
+            active.0 = Some(tip);
+        } else {
+            if let Some(old) = active.0.take() {
+                commands.entity(old).try_despawn();
+            }
+        }
     }
 }
 
@@ -1079,6 +1141,7 @@ fn entity_inspector() -> impl Bundle {
         Node {
             height: percent(100),
             flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip(),
             ..Default::default()
         },
         BackgroundColor(tokens::PANEL_BG),

@@ -151,6 +151,7 @@ impl Plugin for EditorPlugin {
                 (
                     send_scroll_events,
                     layout::update_toolbar_highlights,
+                    layout::update_toolbar_tooltips,
                     layout::update_space_toggle_label,
                     layout::update_edit_tool_highlights,
                     layout::update_workspace_visibility,

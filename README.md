@@ -5,6 +5,16 @@ Very early in dev, expect bugs and changes!
 
 <img width="1917" height="1033" alt="image" src="https://github.com/user-attachments/assets/fa53542b-de0a-420b-bde0-bdcb180992a5" />
 
+
+
+https://github.com/user-attachments/assets/cfe6fb2f-faa2-48be-b3d0-50dee0d0b753
+
+
+
+https://github.com/user-attachments/assets/929c893a-4959-4cc1-bec7-5217c4d33eba
+
+
+
 ## Features
 
 - **Brush-based geometry** draw, edit, and CSG-combine convex brushes with vertex/edge/face/clip editing modes

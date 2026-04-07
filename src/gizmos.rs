@@ -141,7 +141,7 @@ fn handle_gizmo_mode_keys(
     }
 }
 
-fn handle_gizmo_hover(
+pub(crate) fn handle_gizmo_hover(
     selection: Res<Selection>,
     transforms: Query<&GlobalTransform, With<Selected>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,

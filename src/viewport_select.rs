@@ -1,7 +1,7 @@
 use crate::colors;
 use crate::{
     EditorEntity,
-    gizmos::GizmoDragState,
+    gizmos::{GizmoDragState, GizmoHoverState, handle_gizmo_hover},
     modal_transform::{ModalTransformState, ViewportDragState},
     selection::Selection,
     viewport::{MainViewportCamera, SceneViewport},
@@ -29,7 +29,7 @@ impl Plugin for ViewportSelectPlugin {
             .add_systems(
                 Update,
                 (
-                    handle_viewport_click,
+                    handle_viewport_click.after(handle_gizmo_hover),
                     handle_box_select,
                     update_box_select_overlay,
                     exit_group_on_escape,
@@ -69,8 +69,9 @@ pub(crate) fn handle_viewport_click(
     scene_entities: Query<(Entity, &GlobalTransform), (Without<EditorEntity>, With<Transform>)>,
     parents: Query<&ChildOf>,
     brush_groups: Query<(), With<BrushGroup>>,
-    (gizmo_drag, modal, vp_drag): (
+    (gizmo_drag, gizmo_hover, modal, vp_drag): (
         Res<GizmoDragState>,
+        Res<GizmoHoverState>,
         Res<ModalTransformState>,
         Res<ViewportDragState>,
     ),
@@ -87,11 +88,12 @@ pub(crate) fn handle_viewport_click(
 ) {
     let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
 
-    // Don't select during gizmo drag, modal ops, viewport drag, brush edit mode, draw mode,
+    // Don't select during gizmo drag, modal ops, gizmos hovered, viewport drag, brush edit mode, draw mode,
     // terrain sculpt mode, or shift+click (which starts box select)
     if !mouse.just_pressed(MouseButton::Left)
         || shift
         || gizmo_drag.active
+        || gizmo_hover.hovered_axis.is_some()
         || modal.active.is_some()
         || vp_drag.active.is_some()
         || *edit_mode != crate::brush::EditMode::Object

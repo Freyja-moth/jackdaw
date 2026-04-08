@@ -23,8 +23,8 @@ impl Plugin for IconFontPlugin {
             .expect("Failed to load Lucide icon font");
         let icon_handle = fonts.add(icon_font);
 
-        let editor_font = Font::try_from_bytes(FIRA_SANS_BYTES.to_vec())
-            .expect("Failed to load FiraSans font");
+        let editor_font =
+            Font::try_from_bytes(FIRA_SANS_BYTES.to_vec()).expect("Failed to load FiraSans font");
         let editor_font_handle = fonts.add(editor_font.clone());
 
         // Also override Bevy's default font (AssetId::default()) so that ALL Text nodes

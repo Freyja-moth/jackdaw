@@ -21,10 +21,7 @@ pub struct ProjectFilesPlugin;
 impl Plugin for ProjectFilesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ProjectFilesState>()
-            .add_systems(
-                OnEnter(crate::AppState::Editor),
-                setup_project_files,
-            )
+            .add_systems(OnEnter(crate::AppState::Editor), setup_project_files)
             .add_systems(
                 Update,
                 (check_project_watcher, refresh_project_tree)
@@ -107,7 +104,9 @@ fn check_project_watcher(
     mut state: ResMut<ProjectFilesState>,
 ) {
     let Some(watcher) = watcher else { return };
-    let Ok(rx) = watcher.receiver.lock() else { return };
+    let Ok(rx) = watcher.receiver.lock() else {
+        return;
+    };
     if rx.try_recv().is_ok() {
         // Drain any additional pending events
         while rx.try_recv().is_ok() {}

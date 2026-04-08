@@ -190,7 +190,9 @@ pub fn update_scene_stats(
         point_lights.iter().count() + dir_lights.iter().count() + spot_lights.iter().count();
     let camera_count = cameras.iter().count();
 
-    let new_text = format!("{total} entities  {mesh_count} meshes  {light_count} lights  {camera_count} cameras");
+    let new_text = format!(
+        "{total} entities  {mesh_count} meshes  {light_count} lights  {camera_count} cameras"
+    );
     if text.0 != new_text {
         text.0 = new_text;
     }

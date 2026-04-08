@@ -333,8 +333,7 @@ pub(crate) fn on_add_component_button_click(
                     ChildOf(list),
                     observe({
                         let type_path_full = type_path_full.clone();
-                        move |mut click: On<Pointer<Click>>,
-                              mut commands: Commands| {
+                        move |mut click: On<Pointer<Click>>, mut commands: Commands| {
                             click.propagate(false); // Don't let click through to backdrop
                             let tp = type_path_full.clone();
                             commands.queue(move |world: &mut World| {

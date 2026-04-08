@@ -1,9 +1,4 @@
-use bevy::{
-    feathers::theme::ThemedText,
-    picking::hover::Hovered,
-    prelude::*,
-    ui_widgets::observe,
-};
+use bevy::{feathers::theme::ThemedText, picking::hover::Hovered, prelude::*, ui_widgets::observe};
 use jackdaw_feathers::{
     icons::{Icon, IconFont},
     menu_bar, panel_header, popover, separator, split_panel, status_bar,
@@ -122,22 +117,22 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
             BackgroundColor(tokens::WINDOW_BG),
             BorderColor::all(tokens::BORDER_SUBTLE),
             children![
-            // Integrated window header: menu bar + scene tabs + controls
-            window_header(),
-            // Content container (flex grow) — holds both workspaces
-            // Figma: Editor (Rows) has padding: 0px 4px
-            (
-                EditorEntity,
-                Node {
-                    width: percent(100),
-                    flex_grow: 1.0,
-                    min_height: px(0.0),
-                    flex_direction: FlexDirection::Column,
-                    padding: UiRect::horizontal(px(tokens::PANEL_GAP)),
-                    row_gap: px(tokens::PANEL_GAP),
-                    ..Default::default()
-                },
-                children![
+                // Integrated window header: menu bar + scene tabs + controls
+                window_header(),
+                // Content container (flex grow) — holds both workspaces
+                // Figma: Editor (Rows) has padding: 0px 4px
+                (
+                    EditorEntity,
+                    Node {
+                        width: percent(100),
+                        flex_grow: 1.0,
+                        min_height: px(0.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::horizontal(px(tokens::PANEL_GAP)),
+                        row_gap: px(tokens::PANEL_GAP),
+                        ..Default::default()
+                    },
+                    children![
                     // Scene Editor workspace (active by default)
                     (
                         SceneEditorWorkspace,
@@ -204,10 +199,10 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                         ),
                     )
                 ],
-            ),
-            // Status bar (fixed height) with connection indicator
-            editor_status_bar()
-        ],
+                ),
+                // Status bar (fixed height) with connection indicator
+                editor_status_bar()
+            ],
         )],
     )
 }
@@ -373,10 +368,7 @@ fn project_files_panel() -> impl Bundle {
         },
         BackgroundColor(tokens::PANEL_BG),
         children![
-            panel_header::panel_tab_bar(
-                &[panel_header::TabDef::new("Project Files", true)],
-                true,
-            ),
+            panel_header::panel_tab_bar(&[panel_header::TabDef::new("Project Files", true)], true,),
             // Search input
             (
                 Node {
@@ -386,13 +378,11 @@ fn project_files_panel() -> impl Bundle {
                     flex_shrink: 0.0,
                     ..Default::default()
                 },
-                children![(
-                    text_edit::text_edit(
-                        TextEditProps::default()
-                            .with_placeholder("Search...")
-                            .allow_empty()
-                    ),
-                )],
+                children![(text_edit::text_edit(
+                    TextEditProps::default()
+                        .with_placeholder("Search...")
+                        .allow_empty()
+                ),)],
             ),
             // File tree content — populated by ProjectFilesPlugin
             (
@@ -425,7 +415,10 @@ fn center_column(icon_font: Handle<Font>) -> impl Bundle {
         split_panel::panel_group(
             0.15,
             (
-                Spawn((split_panel::panel(4), viewport_with_toolbar(icon_font.clone()))),
+                Spawn((
+                    split_panel::panel(4),
+                    viewport_with_toolbar(icon_font.clone()),
+                )),
                 Spawn(split_panel::panel_handle()),
                 Spawn((split_panel::panel(1), bottom_panels(icon_font))),
             ),

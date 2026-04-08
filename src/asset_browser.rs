@@ -516,40 +516,42 @@ fn refresh_browser_on_change(
             };
 
             // Apply selected highlight if this item is the selected file
-            let is_selected = state.selected_file.as_deref()
-                == Some(entry.path.to_string_lossy().as_ref());
+            let is_selected =
+                state.selected_file.as_deref() == Some(entry.path.to_string_lossy().as_ref());
             if is_selected {
-                commands.entity(item_entity).insert(
-                    BackgroundColor(tokens::ELEVATED_BG),
-                );
+                commands
+                    .entity(item_entity)
+                    .insert(BackgroundColor(tokens::ELEVATED_BG));
             }
 
             commands
                 .entity(item_entity)
                 .observe(highlight_on_hover)
                 .observe(unhighlight_on_out)
-                .observe(move |_: On<Pointer<Click>>,
-                               mut state: ResMut<AssetBrowserState>,
-                               time: Res<Time>| {
-                    let now = time.elapsed_secs_f64();
-                    let is_double = state.selected_file.as_deref() == Some(&path_for_click)
-                        && (now - state.last_click_time) < 0.4;
+                .observe(
+                    move |_: On<Pointer<Click>>,
+                          mut state: ResMut<AssetBrowserState>,
+                          time: Res<Time>| {
+                        let now = time.elapsed_secs_f64();
+                        let is_double = state.selected_file.as_deref() == Some(&path_for_click)
+                            && (now - state.last_click_time) < 0.4;
 
-                    if is_double && is_dir {
-                        // Double-click on directory: navigate
-                        state.current_directory = PathBuf::from(&path_for_click);
-                        state.selected_file = None;
-                        state.needs_refresh = true;
-                    } else if is_double && !is_dir {
-                        // Double-click on file: open/apply
-                        // (handled by FileItemDoubleClicked observer)
-                    } else {
-                        // Single-click: select
-                        state.selected_file = Some(path_for_click.clone());
-                        state.last_click_time = now;
-                        state.needs_refresh = true;
-                    }
-                });
+                        if is_double && is_dir {
+                            // Double-click on directory: navigate
+                            state.current_directory = PathBuf::from(&path_for_click);
+                            state.selected_file = None;
+                            state.needs_refresh = true;
+                        } else if is_double && !is_dir {
+                            // Double-click on file: open/apply
+                            // (handled by FileItemDoubleClicked observer)
+                        } else {
+                            // Single-click: select
+                            state.selected_file = Some(path_for_click.clone());
+                            state.last_click_time = now;
+                            state.needs_refresh = true;
+                        }
+                    },
+                );
         }
     }
 
@@ -1355,119 +1357,118 @@ pub fn asset_browser_panel(icon_font: Handle<Font>) -> impl Bundle {
                     ..Default::default()
                 },
                 children![
-            // Breadcrumb bar: path on left, search + folder button on right
-            (
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::SpaceBetween,
-                    width: Val::Percent(100.0),
-                    height: Val::Px(34.0),
-                    padding: UiRect::axes(Val::Px(tokens::SPACING_MD), Val::Px(tokens::SPACING_SM)),
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                },
-                children![
-                    // Left: breadcrumb path
+                    // Breadcrumb bar: path on left, search + folder button on right
                     (
                         Node {
                             flex_direction: FlexDirection::Row,
                             align_items: AlignItems::Center,
-                            overflow: Overflow::clip(),
-                            flex_shrink: 1.0,
-                            flex_grow: 1.0,
+                            justify_content: JustifyContent::SpaceBetween,
+                            width: Val::Percent(100.0),
+                            height: Val::Px(34.0),
+                            padding: UiRect::axes(
+                                Val::Px(tokens::SPACING_MD),
+                                Val::Px(tokens::SPACING_SM)
+                            ),
+                            flex_shrink: 0.0,
                             ..Default::default()
                         },
                         children![
+                            // Left: breadcrumb path
                             (
-                                AssetBrowserBreadcrumb,
-                                EditorEntity,
                                 Node {
                                     flex_direction: FlexDirection::Row,
                                     align_items: AlignItems::Center,
-                                    ..Default::default()
-                                },
-                            ),
-                        ],
-                    ),
-                    // Right: Search input + folder button
-                    (
-                        Node {
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(tokens::SPACING_SM),
-                            flex_shrink: 0.0,
-                            ..Default::default()
-                        },
-                        children![
-                            // Search... input (matching Figma: 200px width)
-                            (
-                                Node {
-                                    width: Val::Px(200.0),
+                                    overflow: Overflow::clip(),
+                                    flex_shrink: 1.0,
+                                    flex_grow: 1.0,
                                     ..Default::default()
                                 },
                                 children![(
-                                    jackdaw_feathers::text_edit::text_edit(
-                                        jackdaw_feathers::text_edit::TextEditProps::default()
-                                            .with_placeholder("Search...")
-                                            .allow_empty()
-                                    ),
-                                )],
+                                    AssetBrowserBreadcrumb,
+                                    EditorEntity,
+                                    Node {
+                                        flex_direction: FlexDirection::Row,
+                                        align_items: AlignItems::Center,
+                                        ..Default::default()
+                                    },
+                                ),],
                             ),
-                            asset_folder_button(folder_icon_font),
+                            // Right: Search input + folder button
+                            (
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(tokens::SPACING_SM),
+                                    flex_shrink: 0.0,
+                                    ..Default::default()
+                                },
+                                children![
+                                    // Search... input (matching Figma: 200px width)
+                                    (
+                                        Node {
+                                            width: Val::Px(200.0),
+                                            ..Default::default()
+                                        },
+                                        children![(jackdaw_feathers::text_edit::text_edit(
+                                            jackdaw_feathers::text_edit::TextEditProps::default()
+                                                .with_placeholder("Search...")
+                                                .allow_empty()
+                                        ),)],
+                                    ),
+                                    asset_folder_button(folder_icon_font),
+                                ],
+                            ),
                         ],
                     ),
-                ],
-            ),
-            // Main row: content grid + preview panel (separator at top per Figma)
-            (
-                EditorEntity,
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    width: Val::Percent(100.0),
-                    flex_grow: 1.0,
-                    min_height: Val::Px(0.0),
-                    border: UiRect::top(Val::Px(1.0)),
-                    ..Default::default()
-                },
-                BorderColor::all(tokens::BORDER_SUBTLE),
-                children![
-                    // Content area (grid of files)
+                    // Main row: content grid + preview panel (separator at top per Figma)
                     (
-                        AssetBrowserContent,
                         EditorEntity,
                         Node {
                             flex_direction: FlexDirection::Row,
-                            flex_wrap: FlexWrap::Wrap,
-                            align_content: AlignContent::FlexStart,
+                            width: Val::Percent(100.0),
                             flex_grow: 1.0,
-                            min_width: Val::Px(0.0),
                             min_height: Val::Px(0.0),
-                            overflow: Overflow::scroll_y(),
-                            padding: UiRect::all(Val::Px(tokens::SPACING_SM)),
-                            row_gap: Val::Px(tokens::SPACING_XS),
-                            column_gap: Val::Px(tokens::SPACING_XS),
+                            border: UiRect::top(Val::Px(1.0)),
                             ..Default::default()
                         },
-                    ),
-                    // Preview panel (right side, populated dynamically)
-                    (
-                        PreviewPanelContainer,
-                        EditorEntity,
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            width: Val::Px(160.0),
-                            flex_shrink: 0.0,
-                            padding: UiRect::all(Val::Px(tokens::SPACING_SM)),
-                            border: UiRect::left(Val::Px(1.0)),
-                            overflow: Overflow::scroll_y(),
-                            ..Default::default()
-                        },
-                        BorderColor::all(tokens::PANEL_HEADER_BG),
-                    ),
+                        BorderColor::all(tokens::BORDER_SUBTLE),
+                        children![
+                            // Content area (grid of files)
+                            (
+                                AssetBrowserContent,
+                                EditorEntity,
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    flex_wrap: FlexWrap::Wrap,
+                                    align_content: AlignContent::FlexStart,
+                                    flex_grow: 1.0,
+                                    min_width: Val::Px(0.0),
+                                    min_height: Val::Px(0.0),
+                                    overflow: Overflow::scroll_y(),
+                                    padding: UiRect::all(Val::Px(tokens::SPACING_SM)),
+                                    row_gap: Val::Px(tokens::SPACING_XS),
+                                    column_gap: Val::Px(tokens::SPACING_XS),
+                                    ..Default::default()
+                                },
+                            ),
+                            // Preview panel (right side, populated dynamically)
+                            (
+                                PreviewPanelContainer,
+                                EditorEntity,
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    width: Val::Px(160.0),
+                                    flex_shrink: 0.0,
+                                    padding: UiRect::all(Val::Px(tokens::SPACING_SM)),
+                                    border: UiRect::left(Val::Px(1.0)),
+                                    overflow: Overflow::scroll_y(),
+                                    ..Default::default()
+                                },
+                                BorderColor::all(tokens::PANEL_HEADER_BG),
+                            ),
+                        ],
+                    )
                 ],
-            )
-        ],
             ), // close main content container
         ],
     )

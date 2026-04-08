@@ -384,11 +384,7 @@ fn setup_text_edit_input(
 
         if let Some(ref prefix) = config.prefix {
             let prefix_entity = match prefix {
-                TextEditPrefix::Label {
-                    label,
-                    size,
-                    color,
-                } => {
+                TextEditPrefix::Label { label, size, color } => {
                     let has_color = color.is_some();
                     let text_color = if has_color {
                         crate::tokens::TEXT_PRIMARY
@@ -428,10 +424,9 @@ fn setup_text_edit_input(
                         ))
                         .id();
                     if let Some(c) = color {
-                        commands.entity(prefix_id).insert((
-                            BorderColor::all(*c),
-                            BackgroundColor(AXIS_LABEL_BG),
-                        ));
+                        commands
+                            .entity(prefix_id)
+                            .insert((BorderColor::all(*c), BackgroundColor(AXIS_LABEL_BG)));
                     }
                     prefix_id
                 }
@@ -646,8 +641,8 @@ fn handle_unfocus(
 
     let clicked_outside =
         mouse.get_just_pressed().next().is_some() && *interaction == Interaction::None;
-    let enter_pressed = keyboard.just_pressed(KeyCode::Enter)
-        || keyboard.just_pressed(KeyCode::NumpadEnter);
+    let enter_pressed =
+        keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter);
     let key_dismiss = keyboard.just_pressed(KeyCode::Escape) || enter_pressed;
 
     if clicked_outside || key_dismiss {

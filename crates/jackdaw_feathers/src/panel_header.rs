@@ -36,10 +36,7 @@ impl TabDef {
 
 /// Plugin to register tab-related systems.
 pub fn plugin(app: &mut App) {
-    app.add_systems(
-        Update,
-        (setup_panel_tab_bars, handle_tab_clicks),
-    );
+    app.add_systems(Update, (setup_panel_tab_bars, handle_tab_clicks));
 }
 
 /// A simple panel header bar with a title label (single-tab convenience).
@@ -167,9 +164,7 @@ fn setup_panel_tab_bars(
         let mut tab_row_children = Vec::new();
 
         for (label, active, idx) in &setup.tabs {
-            let tab_entity = commands
-                .spawn(build_tab_node(label, *active, *idx))
-                .id();
+            let tab_entity = commands.spawn(build_tab_node(label, *active, *idx)).id();
             tab_row_children.push(tab_entity);
         }
 
@@ -247,9 +242,7 @@ fn setup_panel_tab_bars(
             .add_children(&right_children)
             .id();
 
-        commands
-            .entity(entity)
-            .add_children(&[tab_row, right_row]);
+        commands.entity(entity).add_children(&[tab_row, right_row]);
 
         // Remove the setup component
         commands.entity(entity).remove::<PanelTabBarSetup>();
@@ -369,11 +362,7 @@ fn handle_tab_clicks(
             }
 
             if let Ok(mut node) = node_query.get_mut(tab_entity) {
-                node.border.top = if is_active {
-                    Val::Px(2.0)
-                } else {
-                    Val::ZERO
-                };
+                node.border.top = if is_active { Val::Px(2.0) } else { Val::ZERO };
             }
 
             // Update text color on children

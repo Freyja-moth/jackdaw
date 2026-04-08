@@ -27,9 +27,9 @@ use std::collections::HashSet;
 use bevy_monitors::prelude::{Addition, Monitor, NotifyAdded};
 
 use super::{
-    AddComponentButton, ComponentDisplay, ComponentDisplayBody, ComponentName,
-    ComponentPicker, Inspector, InspectorDirty, InspectorGroupSection, InspectorSearch,
-    InspectorTarget, ReflectDisplayable, ReflectEditorMeta, brush_display, custom_props_display,
+    AddComponentButton, ComponentDisplay, ComponentDisplayBody, ComponentName, ComponentPicker,
+    Inspector, InspectorDirty, InspectorGroupSection, InspectorSearch, InspectorTarget,
+    ReflectDisplayable, ReflectEditorMeta, brush_display, custom_props_display,
     extract_module_group, material_display, reflect_fields,
 };
 

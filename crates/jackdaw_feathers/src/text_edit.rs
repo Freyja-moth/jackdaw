@@ -11,7 +11,7 @@ pub use bevy_ui_text_input::{TextInputBuffer, TextInputQueue};
 use crate::cursor::{ActiveCursor, HoverCursor};
 use crate::icons::EditorFont;
 use crate::tokens::{
-    BORDER_COLOR, ELEVATED_BG, PRIMARY_COLOR, SHADOW_COLOR_LIGHT, TEXT_BODY_COLOR,
+    AXIS_LABEL_BG, BORDER_COLOR, ELEVATED_BG, PRIMARY_COLOR, SHADOW_COLOR_LIGHT, TEXT_BODY_COLOR,
     TEXT_MUTED_COLOR, TEXT_SIZE, TEXT_SIZE_SM,
 };
 
@@ -316,15 +316,27 @@ fn setup_text_edit_input(
             FilterType::Integer => TextInputFilter::Integer,
         });
 
+        let has_prefix = config.prefix.is_some();
         let wrapper_entity = commands
             .spawn((
                 Node {
                     width: percent(100),
                     height: px(INPUT_HEIGHT),
-                    padding: UiRect::axes(px(8), px(4)),
+                    // If prefix, no left padding so the label sits flush at the edge
+                    padding: if has_prefix {
+                        UiRect::new(px(0), px(8), px(0), px(0))
+                    } else {
+                        UiRect::axes(px(8), px(4))
+                    },
                     border_radius: BorderRadius::all(px(4)),
-                    align_items: AlignItems::Center,
+                    // Stretch so prefix fills full height
+                    align_items: if has_prefix {
+                        AlignItems::Stretch
+                    } else {
+                        AlignItems::Center
+                    },
                     column_gap: px(6),
+                    overflow: Overflow::clip(),
                     ..default()
                 },
                 BackgroundColor(ELEVATED_BG),
@@ -371,36 +383,49 @@ fn setup_text_edit_input(
                     size,
                     color,
                 } => {
+                    let has_color = color.is_some();
+                    let text_color = if has_color {
+                        crate::tokens::TEXT_PRIMARY
+                    } else {
+                        TEXT_BODY_COLOR.with_alpha(0.5).into()
+                    };
+
+                    // Container node for layout (bg, border, sizing)
                     let prefix_id = commands
                         .spawn((
-                            Text::new(label),
-                            TextFont {
-                                font: font.clone(),
-                                font_size: *size,
-                                ..default()
-                            },
-                            TextColor(TEXT_BODY_COLOR.with_alpha(0.5).into()),
-                            TextLayout::new_with_justify(Justify::Center),
                             Node {
                                 width: px(AFFIX_SIZE),
-                                border: if color.is_some() {
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: if has_color {
                                     UiRect::left(px(2))
                                 } else {
                                     UiRect::default()
                                 },
-                                padding: if color.is_some() {
-                                    UiRect::left(px(2))
+                                border_radius: if has_color {
+                                    BorderRadius::left(px(2.5))
                                 } else {
-                                    UiRect::default()
+                                    BorderRadius::default()
                                 },
                                 ..default()
                             },
+                            children![(
+                                Text::new(label),
+                                TextFont {
+                                    font: font.clone(),
+                                    font_size: *size,
+                                    ..default()
+                                },
+                                TextColor(text_color),
+                                TextLayout::new_with_justify(Justify::Center),
+                            )],
                         ))
                         .id();
                     if let Some(c) = color {
-                        commands
-                            .entity(prefix_id)
-                            .insert(BorderColor::all(*c));
+                        commands.entity(prefix_id).insert((
+                            BorderColor::all(*c),
+                            BackgroundColor(AXIS_LABEL_BG),
+                        ));
                     }
                     prefix_id
                 }

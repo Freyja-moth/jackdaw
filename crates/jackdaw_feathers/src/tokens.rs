@@ -78,6 +78,8 @@ pub const VIEWPORT_CONTROL_BG: Color = Color::srgb(0.165, 0.165, 0.180);
 
 /// Elevated background for inputs and interactive elements (#36373B)
 pub const ELEVATED_BG: Color = Color::srgb(0.212, 0.216, 0.231);
+/// Axis label container background — lighter than input (#46474C)
+pub const AXIS_LABEL_BG: Color = Color::srgb(0.275, 0.278, 0.298);
 /// Active toolbar button background (#505050)
 pub const TOOLBAR_ACTIVE_BG: Color = Color::srgb(0.314, 0.314, 0.314);
 
@@ -211,6 +213,8 @@ pub const AXIS_X_COLOR: Color = Color::srgb(0.671, 0.251, 0.318);
 pub const AXIS_Y_COLOR: Color = Color::srgb(0.365, 0.553, 0.039);
 /// Z axis color — blue (#2160A3)
 pub const AXIS_Z_COLOR: Color = Color::srgb(0.129, 0.376, 0.639);
+/// W axis color — neutral grey (#808080)
+pub const AXIS_W_COLOR: Color = Color::srgb(0.502, 0.502, 0.502);
 
 // ---------------------------------------------------------------------------
 // File browser icon colors

@@ -352,12 +352,13 @@ fn handle_gizmo_drag(
                 let screen_axis = axis_screen - origin_screen;
                 let len_sq = screen_axis.length_squared();
 
-                if len_sq < EPSILON {  //prevents divide by 0 when screen axis is tiny
+                if len_sq < EPSILON {
+                    //prevents divide by 0 when screen axis is tiny
                     return;
                 }
 
                 let mouse_delta = viewport_cursor - drag_state.drag_start_screen;
-                let projected = mouse_delta.dot(screen_axis)/ len_sq;
+                let projected = mouse_delta.dot(screen_axis) / len_sq;
 
                 let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
                 let raw_delta = axis_dir * projected;

@@ -144,6 +144,8 @@ impl Plugin for EditorPlugin {
             .add_plugins(jackdaw_avian_integration::simulation::PhysicsSimulationPlugin)
             .add_plugins(physics_brush_bridge::PhysicsBrushBridgePlugin)
             .add_plugins(physics_tool::PhysicsToolPlugin)
+            .add_plugins(jackdaw_node_graph::NodeGraphPlugin)
+            .add_plugins(jackdaw_animation::AnimationPlugin)
             .configure_sets(
                 Update,
                 EditorInteraction
@@ -153,6 +155,7 @@ impl Plugin for EditorPlugin {
             .insert_resource(UiTheme(create_dark_theme()))
             .init_resource::<layout::ActiveDocument>()
             .init_resource::<layout::SceneViewPreset>()
+            .init_resource::<layout::ActiveDockWindow>()
             .init_resource::<layout::KeybindHelpPopover>()
             .init_resource::<asset_catalog::AssetCatalog>()
             .init_resource::<jackdaw_jsn::SceneJsnAst>()
@@ -171,12 +174,19 @@ impl Plugin for EditorPlugin {
                     layout::update_edit_tool_highlights,
                     layout::update_active_document_display,
                     layout::update_tab_strip_highlights,
+                    layout::update_dock_body_visibility,
+                    layout::update_dock_sidebar_highlights,
                     auto_hide_internal_entities,
+                    register_animation_entities_in_ast,
+                    follow_scene_selection_to_clip,
                 )
                     .run_if(in_state(AppState::Editor)),
             )
             .add_observer(on_scroll)
-            .add_observer(handle_menu_action);
+            .add_observer(handle_menu_action)
+            .add_observer(on_create_clip_for_selection)
+            .add_observer(on_duration_input_commit)
+            .add_observer(layout::on_dock_sidebar_icon_click);
     }
 }
 
@@ -222,6 +232,220 @@ fn auto_hide_internal_entities(
 fn spawn_layout(mut commands: Commands, icon_font: Res<jackdaw_feathers::icons::IconFont>) {
     commands.spawn((Camera2d, EditorEntity));
     commands.spawn(layout::editor_layout(&icon_font));
+}
+
+/// Observer: when the placeholder "Create Clip for Selection" button
+/// is clicked, spawn a new `Clip` + `Name` + default `AnimTrack` for
+/// the primary selected entity, directly via `SpawnEntity`. The
+/// animation crate deliberately exports no custom commands — this is
+/// the minimum-wrapping form of "create a clip."
+fn on_create_clip_for_selection(
+    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    buttons: Query<(), With<jackdaw_animation::TimelineCreateClipButton>>,
+    selection: Res<selection::Selection>,
+    names: Query<&Name>,
+    mut commands: Commands,
+) {
+    if !buttons.contains(event.entity) {
+        return;
+    }
+    let Some(&primary) = selection.entities.last() else {
+        warn!("Create Clip: no entity selected");
+        return;
+    };
+    let Ok(name) = names.get(primary) else {
+        warn!("Create Clip: selected entity has no Name — give it one in the inspector first");
+        return;
+    };
+    let target_name = name.as_str().to_string();
+
+    commands.queue(move |world: &mut World| {
+        // Spawn clip entity *as a child of the target*. The clip's
+        // position in the hierarchy is what encodes "this animates
+        // that" — compile/bind/snapshot all walk up from the clip to
+        // the parent to find the target. Deletion cascades naturally
+        // and renaming the target can't silently break the clip
+        // because the target is a live Entity reference, not a
+        // String.
+        let clip_entity = world
+            .spawn((
+                jackdaw_animation::Clip::default(),
+                Name::new(format!("{target_name} Clip")),
+                ChildOf(primary),
+            ))
+            .id();
+
+        // Default translation track as a child of the clip.
+        world.spawn((
+            jackdaw_animation::AnimTrack::new(
+                "bevy_transform::components::transform::Transform",
+                "translation",
+            ),
+            Name::new(format!("{target_name} / translation")),
+            ChildOf(clip_entity),
+        ));
+
+        if let Some(mut selected) = world.get_resource_mut::<jackdaw_animation::SelectedClip>() {
+            selected.0 = Some(clip_entity);
+        }
+        if let Some(mut dirty) = world.get_resource_mut::<jackdaw_animation::TimelineDirty>() {
+            dirty.0 = true;
+        }
+    });
+}
+
+/// Keep [`jackdaw_animation::SelectedClip`] in lockstep with the main
+/// editor's [`selection::Selection`] resource so the timeline widget
+/// shows the clip relevant to whatever the user is currently working
+/// with.
+///
+/// Three cases:
+/// - **A.** Primary selection is already an animation entity (clip,
+///   track, or keyframe) — walk up `ChildOf` until we hit the owning
+///   `Clip` marker and select that.
+/// - **B.** Primary selection is a regular scene entity — find the
+///   first `Clip` among its `Children` and select it. Since clips
+///   now live parented to their target, this is a structural lookup
+///   rather than a name-based scan.
+/// - **C.** Nothing matches — clear `SelectedClip` so the timeline
+///   shows its "Create Clip for Selection" placeholder, which the
+///   `on_create_clip_for_selection` observer wires to the current
+///   primary selection.
+///
+/// Lives here rather than in `jackdaw_animation` because the animation
+/// crate must not import the main editor's `Selection` type.
+fn follow_scene_selection_to_clip(
+    selection: Res<selection::Selection>,
+    mut selected_clip: ResMut<jackdaw_animation::SelectedClip>,
+    parents: Query<&ChildOf>,
+    entity_children: Query<&Children>,
+    clip_marker: Query<(), With<jackdaw_animation::Clip>>,
+) {
+    if !selection.is_changed() {
+        return;
+    }
+    let Some(&primary) = selection.entities.last() else {
+        if selected_clip.0.is_some() {
+            selected_clip.0 = None;
+        }
+        return;
+    };
+
+    // Case A: primary is a clip/track/keyframe; walk up to the clip.
+    let mut cursor = primary;
+    for _ in 0..8 {
+        if clip_marker.contains(cursor) {
+            if selected_clip.0 != Some(cursor) {
+                selected_clip.0 = Some(cursor);
+            }
+            return;
+        }
+        let Ok(parent) = parents.get(cursor) else { break };
+        cursor = parent.parent();
+    }
+
+    // Case B: primary is a regular scene entity; pick the first Clip
+    // child under it.
+    if let Ok(children) = entity_children.get(primary) {
+        for child in children.iter() {
+            if clip_marker.contains(child) {
+                if selected_clip.0 != Some(child) {
+                    selected_clip.0 = Some(child);
+                }
+                return;
+            }
+        }
+    }
+
+    // Case C: nothing matches — drop the selection so the placeholder
+    // reappears with "Create Clip" targeting the current primary.
+    if selected_clip.0.is_some() {
+        selected_clip.0 = None;
+    }
+}
+
+/// Observer: when the timeline header's duration field commits,
+/// route the edit through `SetJsnField` so it flows through the AST
+/// and participates in undo/redo + save/load. This is the hand-off
+/// point between the animation crate (which can't import
+/// `SetJsnField`) and the editor binary.
+fn on_duration_input_commit(
+    event: On<jackdaw_feathers::text_edit::TextEditCommitEvent>,
+    duration_inputs: Query<&jackdaw_animation::TimelineDurationInput>,
+    child_of_query: Query<&ChildOf>,
+    clips: Query<&jackdaw_animation::Clip>,
+    mut commands: Commands,
+) {
+    // The commit event fires on the inner text_input entity; the
+    // `TimelineDurationInput` marker sits on the wrapper, so walk
+    // up one step to find it. Matches the pattern used by
+    // `on_material_param_commit` in material_browser.rs.
+    let mut current = event.entity;
+    let mut marker_clip: Option<Entity> = None;
+    for _ in 0..4 {
+        if let Ok(marker) = duration_inputs.get(current) {
+            marker_clip = Some(marker.clip);
+            break;
+        }
+        let Ok(child_of) = child_of_query.get(current) else {
+            break;
+        };
+        current = child_of.parent();
+    }
+
+    let Some(clip_entity) = marker_clip else {
+        return;
+    };
+    let Ok(new_value) = event.text.trim().parse::<f32>() else {
+        return;
+    };
+    let Ok(clip) = clips.get(clip_entity) else {
+        return;
+    };
+    if (new_value - clip.duration).abs() < f32::EPSILON {
+        return;
+    }
+    let old_json = serde_json::json!(clip.duration);
+    let new_json = serde_json::json!(new_value);
+    commands.queue(move |world: &mut World| {
+        let mut history = world
+            .remove_resource::<jackdaw_commands::CommandHistory>()
+            .unwrap_or_default();
+        history.execute(
+            Box::new(commands::SetJsnField {
+                entity: clip_entity,
+                type_path: "jackdaw_animation::clip::Clip".to_string(),
+                field_path: "duration".to_string(),
+                old_value: old_json,
+                new_value: new_json,
+            }),
+            world,
+        );
+        world.insert_resource(history);
+    });
+}
+
+/// After the animation crate spawns new clip/track/keyframe entities,
+/// register them in the JSN AST so they participate in save/load and
+/// undo/redo snapshotting. Runs every frame; cheap because
+/// `register_entity_in_ast` is a no-op for already-registered entities.
+fn register_animation_entities_in_ast(
+    world: &mut World,
+    params: &mut QueryState<
+        Entity,
+        Or<(
+            Added<jackdaw_animation::Clip>,
+            Added<jackdaw_animation::AnimTrack>,
+            Added<jackdaw_animation::Vec3Keyframe>,
+            Added<jackdaw_animation::QuatKeyframe>,
+            Added<jackdaw_animation::F32Keyframe>,
+        )>,
+    >,
+) {
+    let entities: Vec<Entity> = params.iter(world).collect();
+    for entity in entities {
+        scene_io::register_entity_in_ast(world, entity);
+    }
 }
 
 fn populate_menu(world: &mut World) {

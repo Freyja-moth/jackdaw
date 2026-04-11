@@ -22,6 +22,7 @@ pub struct PanelTabBarMarker;
 /// Definition of a tab to create.
 pub struct TabDef {
     pub label: String,
+    pub icon: Option<Icon>,
     pub active: bool,
 }
 
@@ -29,8 +30,15 @@ impl TabDef {
     pub fn new(label: impl Into<String>, active: bool) -> Self {
         Self {
             label: label.into(),
+            icon: None,
             active,
         }
+    }
+
+    /// Prefix the tab label with a Lucide icon glyph.
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
     }
 }
 
@@ -104,10 +112,10 @@ pub fn panel_header(title: &str) -> impl Bundle {
 pub fn panel_tab_bar(tabs: &[TabDef], show_grip: bool) -> impl Bundle + use<> {
     let active_idx = tabs.iter().position(|t| t.active).unwrap_or(0);
 
-    let tab_defs: Vec<(String, bool, usize)> = tabs
+    let tab_defs: Vec<(String, Option<Icon>, bool, usize)> = tabs
         .iter()
         .enumerate()
-        .map(|(i, t)| (t.label.clone(), t.active, i))
+        .map(|(i, t)| (t.label.clone(), t.icon, t.active, i))
         .collect();
 
     (
@@ -147,7 +155,7 @@ pub fn panel_tab_bar(tabs: &[TabDef], show_grip: bool) -> impl Bundle + use<> {
 /// Temporary component consumed by the setup system to populate tab children.
 #[derive(Component)]
 struct PanelTabBarSetup {
-    tabs: Vec<(String, bool, usize)>,
+    tabs: Vec<(String, Option<Icon>, bool, usize)>,
     show_grip: bool,
 }
 
@@ -163,8 +171,45 @@ fn setup_panel_tab_bars(
         // Left side: tab row
         let mut tab_row_children = Vec::new();
 
-        for (label, active, idx) in &setup.tabs {
-            let tab_entity = commands.spawn(build_tab_node(label, *active, *idx)).id();
+        for (label, icon, active, idx) in &setup.tabs {
+            let tab_entity = commands.spawn(tab_shell(*active, *idx)).id();
+
+            // Optional icon glyph, only rendered if both an icon and
+            // the Lucide font are present.
+            if let (Some(glyph), Some(font_handle)) = (icon, font.clone()) {
+                let icon_entity = commands
+                    .spawn((
+                        Text::new(String::from(glyph.unicode())),
+                        TextFont {
+                            font: font_handle,
+                            font_size: tokens::ICON_SM,
+                            ..Default::default()
+                        },
+                        TextColor(if *active {
+                            tokens::TEXT_PRIMARY
+                        } else {
+                            tokens::TAB_INACTIVE_TEXT
+                        }),
+                        ChildOf(tab_entity),
+                    ))
+                    .id();
+                let _ = icon_entity;
+            }
+
+            commands.spawn((
+                Text::new(label.clone()),
+                TextFont {
+                    font_size: tokens::TEXT_SIZE_LG,
+                    ..Default::default()
+                },
+                TextColor(if *active {
+                    tokens::TEXT_PRIMARY
+                } else {
+                    tokens::TAB_INACTIVE_TEXT
+                }),
+                ChildOf(tab_entity),
+            ));
+
             tab_row_children.push(tab_entity);
         }
 
@@ -249,17 +294,15 @@ fn setup_panel_tab_bars(
     }
 }
 
-fn build_tab_node(label: &str, active: bool, idx: usize) -> impl Bundle {
+/// Spawn the outer tab container (background + border + click
+/// target). Children (icon + label) are attached separately by
+/// [`setup_panel_tab_bars`] because `children!` can't express a
+/// conditional icon element.
+fn tab_shell(active: bool, idx: usize) -> impl Bundle {
     let bg = if active {
         tokens::TAB_ACTIVE_BG
     } else {
         Color::NONE
-    };
-
-    let text_color = if active {
-        tokens::TEXT_PRIMARY
-    } else {
-        tokens::TAB_INACTIVE_TEXT
     };
 
     let border_top = if active { Val::Px(2.0) } else { Val::ZERO };
@@ -277,6 +320,7 @@ fn build_tab_node(label: &str, active: bool, idx: usize) -> impl Bundle {
             flex_direction: FlexDirection::Row,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
+            column_gap: Val::Px(tokens::SPACING_XS),
             padding: UiRect::horizontal(Val::Px(8.0)),
             height: Val::Percent(100.0),
             border: UiRect {
@@ -288,14 +332,6 @@ fn build_tab_node(label: &str, active: bool, idx: usize) -> impl Bundle {
         },
         BackgroundColor(bg),
         BorderColor::all(border_color),
-        children![(
-            Text::new(label),
-            TextFont {
-                font_size: tokens::TEXT_SIZE_LG,
-                ..Default::default()
-            },
-            TextColor(text_color),
-        )],
     )
 }
 

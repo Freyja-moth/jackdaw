@@ -1,6 +1,5 @@
 use bevy::{feathers::theme::ThemedText, picking::hover::Hovered, prelude::*, ui_widgets::observe};
 use jackdaw_feathers::{
-    combobox::{self, ComboBoxChangeEvent},
     icons::{Icon, IconFont},
     menu_bar, panel_header, popover, separator, split_panel, status_bar,
     text_edit::{self, TextEditProps},
@@ -61,14 +60,15 @@ impl TabKind {
     }
 }
 
-/// Layout preset for the Scene document tab, chosen via the header's
-/// `Scene View ▾` dropdown. Phase 5 wires up the `Animation` variant; for
-/// now it just reveals an empty placeholder panel.
+/// Layout preset for the Scene document tab. Kept as a
+/// single-variant enum for now so future layout presets (e.g. a
+/// distraction-free shader authoring view) can slot in without
+/// reintroducing the plumbing. The old `Animation` variant was
+/// removed when the timeline became a bottom-panel tab.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SceneViewPreset {
     #[default]
     Scene,
-    Animation,
 }
 
 /// The tab the editor is currently showing.
@@ -93,9 +93,40 @@ pub struct DocumentTabButton(pub TabKind);
 #[derive(Component)]
 pub struct DocumentRoot(pub TabKind);
 
-/// Marker on the Scene View combobox wrapper so we can find it later.
+/// Marker on the center column container. Retained as a hook for
+/// systems that want to find the main viewport-plus-bottom-panels
+/// area. Formerly driven by `SceneViewPreset`; now unconditional.
 #[derive(Component)]
-pub struct SceneViewDropdownButton;
+pub struct SceneCenter;
+
+/// Which tool window is currently shown in the bottom dock panel.
+/// Each sidebar icon switches this resource; the
+/// [`update_dock_body_visibility`] system toggles `Display` on
+/// [`DockBody`] containers to match.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DockWindowKind {
+    Terminal,
+    #[default]
+    Assets,
+    Timeline,
+}
+
+/// Type-erased wrapper resource so we can mark the active dock
+/// window without scattering `Res<DockWindowKind>` everywhere.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct ActiveDockWindow(pub DockWindowKind);
+
+/// Marker on a clickable sidebar icon. Carries the window kind the
+/// icon selects.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub struct DockSidebarIcon(pub DockWindowKind);
+
+/// Marker on one of the body containers in the dock panel. There's
+/// one per window kind; `update_dock_body_visibility` toggles their
+/// `Display` based on [`ActiveDockWindow`].
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub struct DockBody(pub DockWindowKind);
+
 
 /// Marker on the hierarchy filter text input
 #[derive(Component)]
@@ -211,7 +242,7 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                                     // Left column: hierarchy + project files (~266px default, ratio 1)
                                     Spawn((split_panel::panel(1), left_column(font.clone()))),
                                     Spawn(split_panel::panel_handle()),
-                                    // Center column: viewport + bottom panels (ratio 4)
+                                    // Center column: Scene/Animation preset swap (ratio 4).
                                     Spawn((
                                         split_panel::panel(4),
                                         center_column(font.clone()),
@@ -332,7 +363,7 @@ fn window_header() -> impl Bundle {
                     column_gap: px(6.0),
                     ..Default::default()
                 },
-                children![scene_view_dropdown(), play_pause_controls(),],
+                children![play_pause_controls(),],
             ),
         ],
     )
@@ -414,40 +445,6 @@ fn document_tab(kind: TabKind, active: bool) -> impl Bundle {
                 active.kind = kind;
             },
         ),
-    )
-}
-
-/// Scene View ▾ combobox using the shared feathers widget. Clicking it
-/// opens a proper popover with entries for each [`SceneViewPreset`];
-/// selecting one fires a [`ComboBoxChangeEvent`] which
-/// [`on_scene_view_combobox_change`] translates into a resource update.
-///
-/// Wrapped in a fixed-width container so the overall header layout stays
-/// stable when the selected label changes width.
-fn scene_view_dropdown() -> impl Bundle {
-    (
-        SceneViewDropdownButton,
-        EditorEntity,
-        Node {
-            width: px(150.0),
-            height: px(24.0),
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            ..Default::default()
-        },
-        children![(
-            combobox::combobox_with_selected(
-                vec!["Scene View", "Animation View"],
-                0,
-            ),
-            observe(|event: On<ComboBoxChangeEvent>, mut preset: ResMut<SceneViewPreset>| {
-                *preset = match event.selected {
-                    0 => SceneViewPreset::Scene,
-                    1 => SceneViewPreset::Animation,
-                    _ => SceneViewPreset::Scene,
-                };
-            }),
-        )],
     )
 }
 
@@ -562,6 +559,11 @@ fn project_files_panel() -> impl Bundle {
     )
 }
 
+/// Build the center column: a vertical split with the 3D viewport on
+/// top and the tabbable bottom-panels area (Assets / Timeline / ...)
+/// underneath. No more preset swapping — the timeline is just a tab
+/// in the bottom panel, available whenever the user wants to
+/// animate, without having to "enter Animation View" as a mode.
 fn center_column(icon_font: Handle<Font>) -> impl Bundle {
     (
         EditorEntity,
@@ -571,7 +573,6 @@ fn center_column(icon_font: Handle<Font>) -> impl Bundle {
             flex_direction: FlexDirection::Column,
             ..Default::default()
         },
-        // Vertical split: viewport (top) | bottom panels (bottom)
         split_panel::panel_group(
             0.15,
             (
@@ -1488,6 +1489,74 @@ pub fn update_active_document_display(
     }
 }
 
+
+/// Click observer on dock sidebar icons — sets
+/// [`ActiveDockWindow`] to whatever kind the clicked icon
+/// represents. Runs as a global observer via `add_observer`; the
+/// `Interaction` component on each icon generates the
+/// `Pointer<Click>` events.
+pub fn on_dock_sidebar_icon_click(
+    trigger: On<Pointer<Click>>,
+    icons: Query<&DockSidebarIcon>,
+    mut active: ResMut<ActiveDockWindow>,
+) {
+    let Ok(icon) = icons.get(trigger.event_target()) else {
+        return;
+    };
+    if active.0 != icon.0 {
+        active.0 = icon.0;
+    }
+}
+
+/// Toggle `Display` on every [`DockBody`] so only the one matching
+/// [`ActiveDockWindow`] is visible. Runs every frame, cheap, and the
+/// branch early-exits when the resource hasn't changed.
+pub fn update_dock_body_visibility(
+    active: Res<ActiveDockWindow>,
+    mut bodies: Query<(&DockBody, &mut Node)>,
+) {
+    if !active.is_changed() {
+        return;
+    }
+    for (body, mut node) in &mut bodies {
+        node.display = if body.0 == active.0 {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+}
+
+/// Restyle dock sidebar icons so the active one gets an accent blue
+/// left border and primary text color, matching the legacy look of
+/// the asset-browser sidebar.
+pub fn update_dock_sidebar_highlights(
+    active: Res<ActiveDockWindow>,
+    mut icons: Query<(&DockSidebarIcon, &mut BorderColor, &Children)>,
+    mut text_colors: Query<&mut TextColor>,
+) {
+    if !active.is_changed() {
+        return;
+    }
+    for (icon, mut border, children) in &mut icons {
+        let is_active = icon.0 == active.0;
+        *border = BorderColor::all(if is_active {
+            tokens::ACCENT_BLUE
+        } else {
+            Color::NONE
+        });
+        for child in children.iter() {
+            if let Ok(mut tc) = text_colors.get_mut(child) {
+                tc.0 = if is_active {
+                    tokens::TEXT_PRIMARY
+                } else {
+                    tokens::TAB_INACTIVE_TEXT
+                };
+            }
+        }
+    }
+}
+
 /// Refresh tab-strip styling — active tab gets its bg + border, inactive
 /// tabs go transparent; Schedule Explorer dims when Remote is
 /// disconnected.
@@ -1540,8 +1609,193 @@ pub fn update_tab_strip_highlights(
     }
 }
 
+/// The bottom panel area below the viewport. Split into a 30px
+/// left window-selector sidebar + a body area that hosts whichever
+/// window is currently active (Assets, Timeline, ...).
+///
+/// This is the embryo of a docking system: in the near-term the
+/// sidebar icons swap the single body between a few tool windows.
+/// Later, top-of-panel tabs will let you open multiple instances of
+/// the same window kind (two asset browsers at different paths,
+/// multiple timelines for different clips, etc.).
 fn bottom_panels(icon_font: Handle<Font>) -> impl Bundle {
-    asset_browser::asset_browser_panel(icon_font)
+    (
+        EditorEntity,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            flex_direction: FlexDirection::Row,
+            overflow: Overflow::clip(),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::PANEL_BG),
+        children![
+            dock_window_sidebar(icon_font.clone()),
+            dock_body_area(icon_font),
+        ],
+    )
+}
+
+/// 30px vertical sidebar with one clickable icon per dock window
+/// kind. Matches the legacy sidebar that used to live inside the
+/// asset browser — same visual styling (borders, colors, active-state
+/// blue left accent) but now acts as a real window picker.
+fn dock_window_sidebar(icon_font: Handle<Font>) -> impl Bundle {
+    (
+        EditorEntity,
+        Node {
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            width: Val::Px(30.0),
+            padding: UiRect::new(Val::Px(1.0), Val::ZERO, Val::Px(4.0), Val::Px(9.0)),
+            flex_shrink: 0.0,
+            border: UiRect {
+                left: Val::Px(1.0),
+                top: Val::Px(1.0),
+                bottom: Val::Px(1.0),
+                right: Val::ZERO,
+            },
+            border_radius: BorderRadius::left(Val::Px(5.0)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::WINDOW_BG),
+        BorderColor::all(tokens::PANEL_BORDER),
+        children![
+            // Top group: the window pickers themselves.
+            (
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    ..Default::default()
+                },
+                children![
+                    dock_sidebar_icon(DockWindowKind::Terminal, Icon::Terminal, icon_font.clone()),
+                    dock_sidebar_icon(DockWindowKind::Assets, Icon::FolderOpen, icon_font.clone()),
+                    dock_sidebar_icon(DockWindowKind::Timeline, Icon::Ruler, icon_font.clone()),
+                ],
+            ),
+            // Bottom grip handle (decorative, will become a drag
+            // affordance when the docking system lands).
+            (
+                Node {
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..Default::default()
+                },
+                children![(
+                    Text::new(String::from(Icon::GripVertical.unicode())),
+                    TextFont {
+                        font: icon_font,
+                        font_size: 15.0,
+                        ..Default::default()
+                    },
+                    TextColor(tokens::TAB_INACTIVE_TEXT),
+                )],
+            ),
+        ],
+    )
+}
+
+/// A single clickable icon button in the dock sidebar. The button
+/// carries a `DockSidebarIcon` marker that identifies which window
+/// kind it selects; clicking it sets [`ActiveDockWindow`], which is
+/// consumed by [`update_dock_body_visibility`] and
+/// [`update_dock_sidebar_highlights`] to swap the body and restyle
+/// the sidebar respectively.
+fn dock_sidebar_icon(
+    kind: DockWindowKind,
+    icon: Icon,
+    icon_font: Handle<Font>,
+) -> impl Bundle {
+    (
+        DockSidebarIcon(kind),
+        Interaction::default(),
+        Node {
+            width: Val::Px(29.0),
+            height: Val::Px(30.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::left(Val::Px(2.0)),
+            ..Default::default()
+        },
+        BorderColor::all(Color::NONE),
+        children![(
+            Text::new(String::from(icon.unicode())),
+            TextFont {
+                font: icon_font,
+                font_size: tokens::ICON_MD,
+                ..Default::default()
+            },
+            TextColor(tokens::TAB_INACTIVE_TEXT),
+        )],
+    )
+}
+
+/// Container for the dock body — one sibling per window kind, with
+/// `update_dock_body_visibility` toggling `Display` so only the
+/// active one is visible. All bodies are spawned up-front so their
+/// internal state (asset browser path, timeline cursor, etc.)
+/// persists across switches.
+fn dock_body_area(icon_font: Handle<Font>) -> impl Bundle {
+    (
+        EditorEntity,
+        Node {
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            min_width: Val::Px(0.0),
+            min_height: Val::Px(0.0),
+            ..Default::default()
+        },
+        children![
+            // Assets body — active by default.
+            (
+                DockBody(DockWindowKind::Assets),
+                Node {
+                    flex_grow: 1.0,
+                    width: percent(100),
+                    min_height: Val::Px(0.0),
+                    display: Display::Flex,
+                    ..Default::default()
+                },
+                children![asset_browser::asset_browser_panel(icon_font.clone())],
+            ),
+            // Timeline body.
+            (
+                DockBody(DockWindowKind::Timeline),
+                Node {
+                    flex_grow: 1.0,
+                    width: percent(100),
+                    min_height: Val::Px(0.0),
+                    display: Display::None,
+                    ..Default::default()
+                },
+                children![jackdaw_animation::timeline_panel()],
+            ),
+            // Terminal body — placeholder for now. Kept as a dead
+            // container so the sidebar icon has something to switch
+            // to without crashing.
+            (
+                DockBody(DockWindowKind::Terminal),
+                Node {
+                    flex_grow: 1.0,
+                    width: percent(100),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..Default::default()
+                },
+                children![(
+                    Text::new("Terminal window — not implemented yet"),
+                    TextFont {
+                        font_size: tokens::FONT_MD,
+                        ..Default::default()
+                    },
+                    TextColor(tokens::TEXT_MUTED_COLOR.into()),
+                )],
+            ),
+        ],
+    )
 }
 
 /// Custom status bar that wraps the feathers status bar sections and adds

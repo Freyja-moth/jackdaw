@@ -1224,129 +1224,26 @@ fn poll_asset_browser_folder(world: &mut World) {
 
 pub fn asset_browser_panel(icon_font: Handle<Font>) -> impl Bundle {
     let folder_icon_font = icon_font.clone();
-    let sidebar_font = icon_font;
+    // NOTE: the 30px window-selector sidebar that used to live here
+    // is now owned by `layout::bottom_panels` (the dock container),
+    // because it's about picking WHICH tool window is shown in the
+    // bottom panel, not about the asset browser itself. Adding more
+    // windows (e.g. Timeline) means adding an icon there, not
+    // touching this function.
+    let _ = icon_font;
     (
         AssetBrowserPanel,
         EditorEntity,
         Node {
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
-            flex_direction: FlexDirection::Row,
+            flex_direction: FlexDirection::Column,
             border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_LG)),
             overflow: Overflow::clip(),
             ..Default::default()
         },
         BackgroundColor(tokens::PANEL_BG),
         children![
-            // Vertical icon tab sidebar (30px wide, left side)
-            (
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    justify_content: JustifyContent::SpaceBetween,
-                    align_items: AlignItems::Center,
-                    width: Val::Px(30.0),
-                    padding: UiRect::new(Val::Px(1.0), Val::ZERO, Val::Px(4.0), Val::Px(9.0)),
-                    flex_shrink: 0.0,
-                    border: UiRect {
-                        left: Val::Px(1.0),
-                        top: Val::Px(1.0),
-                        bottom: Val::Px(1.0),
-                        right: Val::ZERO,
-                    },
-                    border_radius: BorderRadius::left(Val::Px(5.0)),
-                    ..Default::default()
-                },
-                BackgroundColor(tokens::WINDOW_BG),
-                BorderColor::all(tokens::PANEL_BORDER),
-                children![
-                    // Icon buttons
-                    (
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            align_items: AlignItems::Center,
-                            ..Default::default()
-                        },
-                        children![
-                            // Terminal icon
-                            (
-                                Node {
-                                    width: Val::Px(29.0),
-                                    height: Val::Px(30.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..Default::default()
-                                },
-                                children![(
-                                    Text::new(String::from(icons::Icon::Terminal.unicode())),
-                                    TextFont {
-                                        font: sidebar_font.clone(),
-                                        font_size: tokens::ICON_MD,
-                                        ..Default::default()
-                                    },
-                                    TextColor(tokens::TAB_INACTIVE_TEXT),
-                                )],
-                            ),
-                            // Folder icon (active, has blue left border)
-                            (
-                                Node {
-                                    width: Val::Px(29.0),
-                                    height: Val::Px(30.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::left(Val::Px(2.0)),
-                                    ..Default::default()
-                                },
-                                BorderColor::all(tokens::ACCENT_BLUE),
-                                children![(
-                                    Text::new(String::from(icons::Icon::FolderOpen.unicode())),
-                                    TextFont {
-                                        font: sidebar_font.clone(),
-                                        font_size: tokens::ICON_MD,
-                                        ..Default::default()
-                                    },
-                                    TextColor(tokens::TEXT_PRIMARY),
-                                )],
-                            ),
-                            // Plus icon
-                            (
-                                Node {
-                                    width: Val::Px(29.0),
-                                    height: Val::Px(30.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..Default::default()
-                                },
-                                children![(
-                                    Text::new(String::from(icons::Icon::Plus.unicode())),
-                                    TextFont {
-                                        font: sidebar_font.clone(),
-                                        font_size: tokens::ICON_SM,
-                                        ..Default::default()
-                                    },
-                                    TextColor(tokens::TAB_INACTIVE_TEXT),
-                                )],
-                            ),
-                        ],
-                    ),
-                    // Grip handle at bottom
-                    (
-                        Node {
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..Default::default()
-                        },
-                        children![(
-                            Text::new(String::from(icons::Icon::GripVertical.unicode())),
-                            TextFont {
-                                font: sidebar_font,
-                                font_size: 15.0,
-                                ..Default::default()
-                            },
-                            TextColor(tokens::TAB_INACTIVE_TEXT),
-                        )],
-                    ),
-                ],
-            ),
             // Main asset browser content
             (
                 Node {

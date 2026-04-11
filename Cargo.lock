@@ -4328,6 +4328,7 @@ dependencies = [
  "bincode",
  "dirs",
  "ehttp",
+ "jackdaw_animation",
  "jackdaw_avian_integration",
  "jackdaw_camera",
  "jackdaw_commands",
@@ -4344,6 +4345,17 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "jackdaw_animation"
+version = "0.3.0"
+dependencies = [
+ "bevy",
+ "jackdaw_commands",
+ "jackdaw_feathers",
+ "lucide-icons",
+ "serde",
 ]
 
 [[package]]

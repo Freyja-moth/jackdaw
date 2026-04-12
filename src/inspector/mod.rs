@@ -1,3 +1,4 @@
+mod anim_diamond;
 mod brush_display;
 pub(crate) mod component_display;
 mod component_picker;
@@ -127,6 +128,7 @@ impl Plugin for InspectorPlugin {
             .add_observer(brush_display::on_brush_face_text_commit)
             .add_observer(on_name_field_commit)
             .add_observer(material_display::on_material_text_commit)
+            .add_observer(anim_diamond::on_diamond_click)
             .add_systems(
                 Update,
                 (
@@ -136,6 +138,8 @@ impl Plugin for InspectorPlugin {
                     component_picker::close_picker_on_escape,
                     brush_display::update_brush_face_properties,
                     component_display::filter_inspector_components,
+                    anim_diamond::decorate_animatable_fields,
+                    anim_diamond::update_anim_diamond_highlights,
                 )
                     .run_if(in_state(crate::AppState::Editor)),
             );
@@ -219,6 +223,24 @@ pub(super) struct InspectorGroupSection;
 /// Tracks which inspector field entity maps to which source entity + component + field path.
 #[derive(Component)]
 pub(super) struct FieldBinding {
+    pub(super) source_entity: Entity,
+    pub(super) type_path: String,
+    pub(super) field_path: String,
+}
+
+/// Marker on the row-level container of a labeled inspector field,
+/// carrying the **root** `(component_type_path, field_path)` for the
+/// row regardless of how many scalar inputs sit inside it.
+///
+/// For scalar fields (e.g. `f32 intensity`) the row has one
+/// `FieldBinding` with the same path as this marker. For composite
+/// fields like `Vec3 translation` the row contains three axis
+/// `FieldBinding`s with paths `translation.x` / `.y` / `.z`, but
+/// there's still only one `InspectorFieldRow` on the outer column —
+/// so per-field decorations (like the animation keyframe diamond)
+/// can hang off this marker without being duplicated per axis.
+#[derive(Component)]
+pub(super) struct InspectorFieldRow {
     pub(super) source_entity: Entity,
     pub(super) type_path: String,
     pub(super) field_path: String,

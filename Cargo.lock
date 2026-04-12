@@ -4328,12 +4328,14 @@ dependencies = [
  "bincode",
  "dirs",
  "ehttp",
+ "jackdaw_animation",
  "jackdaw_avian_integration",
  "jackdaw_camera",
  "jackdaw_commands",
  "jackdaw_feathers",
  "jackdaw_geometry",
  "jackdaw_jsn",
+ "jackdaw_node_graph",
  "jackdaw_remote",
  "jackdaw_terrain",
  "jackdaw_widgets",
@@ -4343,6 +4345,18 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "jackdaw_animation"
+version = "0.3.0"
+dependencies = [
+ "bevy",
+ "jackdaw_commands",
+ "jackdaw_feathers",
+ "jackdaw_node_graph",
+ "lucide-icons",
+ "serde",
 ]
 
 [[package]]
@@ -4397,6 +4411,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jackdaw_node_graph"
+version = "0.3.0"
+dependencies = [
+ "bevy",
+ "bevy_monitors",
+ "jackdaw_commands",
+ "jackdaw_feathers",
+ "jackdaw_widgets",
+ "serde",
 ]
 
 [[package]]

@@ -64,6 +64,32 @@ pub const TAB_ACTIVE_BORDER: Color = Color::srgb(0.126, 0.431, 0.784);
 pub const TAB_INACTIVE_TEXT: Color = Color::srgb(0.659, 0.659, 0.659);
 
 // ---------------------------------------------------------------------------
+// Document tab strip (top-level header tabs — Figma spec)
+// ---------------------------------------------------------------------------
+
+/// Active document tab background (Figma #46474C)
+pub const DOC_TAB_ACTIVE_BG: Color = Color::srgb(0.275, 0.278, 0.298);
+/// Active document tab border (Figma rgba(255,255,255,0.05))
+pub const DOC_TAB_ACTIVE_BORDER: Color = Color::srgba(1.0, 1.0, 1.0, 0.05);
+/// Active document tab label color (Figma #DBDBDB)
+pub const DOC_TAB_ACTIVE_LABEL: Color = Color::srgb(0.859, 0.859, 0.859);
+/// Inactive document tab label color (Figma #838385)
+pub const DOC_TAB_INACTIVE_LABEL: Color = Color::srgb(0.514, 0.514, 0.522);
+/// Dirty-marker dot color inside an active tab (Figma #D9D9D9)
+pub const DOC_TAB_DIRTY_DOT: Color = Color::srgb(0.851, 0.851, 0.851);
+/// Scene tab accent stripe (Figma #206EC9)
+pub const DOC_TAB_SCENE_ACCENT: Color = Color::srgb(0.126, 0.431, 0.788);
+/// Tool tab accent stripe for things like Schedule Explorer (Figma #FFCA39)
+pub const DOC_TAB_TOOL_ACCENT: Color = Color::srgb(1.0, 0.792, 0.224);
+
+/// Background for Scene View dropdown + Play/Pause pills (Figma #36373B)
+pub const HEADER_CONTROL_BG: Color = Color::srgb(0.212, 0.216, 0.231);
+/// Border for Scene View dropdown + Play/Pause pills (Figma #414142)
+pub const HEADER_CONTROL_BORDER: Color = Color::srgb(0.255, 0.255, 0.259);
+/// Label color inside the Scene View dropdown (Figma #DADADA)
+pub const HEADER_CONTROL_LABEL: Color = Color::srgb(0.855, 0.855, 0.855);
+
+// ---------------------------------------------------------------------------
 // Viewport-specific backgrounds
 // ---------------------------------------------------------------------------
 

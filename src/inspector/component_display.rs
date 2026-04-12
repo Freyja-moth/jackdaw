@@ -164,6 +164,7 @@ pub(crate) fn build_inspector_displays(
                 if full_path.starts_with("jackdaw")
                     && !full_path.starts_with("jackdaw_jsn")
                     && !full_path.starts_with("jackdaw_avian_integration")
+                    && !full_path.starts_with("jackdaw_animation")
                 {
                     return None;
                 }
@@ -196,6 +197,7 @@ pub(crate) fn build_inspector_displays(
             if name.starts_with("jackdaw")
                 && !name.starts_with("jackdaw_jsn")
                 && !name.starts_with("jackdaw_avian_integration")
+                && !name.starts_with("jackdaw_animation")
             {
                 return None;
             }

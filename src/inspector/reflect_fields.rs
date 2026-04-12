@@ -23,7 +23,7 @@ use jackdaw_feathers::{
 
 use crate::colors;
 
-use super::{FieldBinding, MAX_REFLECT_DEPTH};
+use super::{FieldBinding, InspectorFieldRow, MAX_REFLECT_DEPTH};
 
 pub(crate) fn spawn_reflected_fields(
     commands: &mut Commands,
@@ -857,7 +857,10 @@ fn spawn_vec3_row(
     depth: usize,
 ) {
     let left_padding = depth as f32 * tokens::SPACING_MD;
-    // Column container: label above, axis inputs below
+    // Column container: label above, axis inputs below.
+    // Carries an `InspectorFieldRow` marker so row-level decorators
+    // (e.g. the animation keyframe diamond) can hang off the root
+    // field without being duplicated per axis.
     let col = commands
         .spawn((
             Node {
@@ -865,7 +868,13 @@ fn spawn_vec3_row(
                 row_gap: px(tokens::SPACING_XS),
                 padding: UiRect::left(px(left_padding)),
                 width: Val::Percent(100.0),
+                position_type: PositionType::Relative,
                 ..Default::default()
+            },
+            InspectorFieldRow {
+                source_entity,
+                type_path: type_path.to_string(),
+                field_path: field_path.clone(),
             },
             ChildOf(parent),
         ))
@@ -1018,7 +1027,13 @@ fn spawn_vec4_row(
                 row_gap: px(tokens::SPACING_XS),
                 padding: UiRect::left(px(left_padding)),
                 width: Val::Percent(100.0),
+                position_type: PositionType::Relative,
                 ..Default::default()
+            },
+            InspectorFieldRow {
+                source_entity,
+                type_path: type_path.to_string(),
+                field_path: field_path.clone(),
             },
             ChildOf(parent),
         ))
@@ -1307,7 +1322,13 @@ fn spawn_numeric_field(
                 row_gap: px(tokens::SPACING_XS),
                 padding: UiRect::left(px(left_padding)),
                 width: Val::Percent(100.0),
+                position_type: PositionType::Relative,
                 ..Default::default()
+            },
+            InspectorFieldRow {
+                source_entity,
+                type_path: type_path.to_string(),
+                field_path: field_path.clone(),
             },
             ChildOf(parent),
         ))

@@ -118,7 +118,12 @@ fn find_ancestor(
 #[derive(Component)]
 pub struct MenuBarRoot;
 
-/// Build the styled menu bar shell. Items are spawned by `populate_menu_bar` system.
+/// Build the styled menu bar shell. Items are spawned by
+/// `populate_menu_bar` system.
+///
+/// The shell sizes to its content width (menu items + padding) so it
+/// composes cleanly inside a horizontal flex row alongside siblings like
+/// a document tab strip or transport controls.
 pub fn menu_bar_shell() -> impl Bundle {
     (
         MenuBarRoot,
@@ -126,7 +131,10 @@ pub fn menu_bar_shell() -> impl Bundle {
         Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
-            width: Val::Percent(100.0),
+            // Auto width so siblings (tab strips, transport pills) get
+            // their share of the row; `flex_shrink: 0` keeps our menu
+            // items from being squeezed if the window is narrow.
+            width: Val::Auto,
             height: Val::Px(tokens::MENU_BAR_HEIGHT),
             flex_shrink: 0.0,
             padding: UiRect::horizontal(Val::Px(tokens::SPACING_SM)),

@@ -411,7 +411,7 @@ fn camera_snapped_rotation_axes(gt: &GlobalTransform) -> (Vec3, Vec3, Vec3) {
     (yaw_axis, roll_axis, pitch_axis)
 }
 
-fn handle_entity_keys(world: &mut World) {
+pub fn handle_entity_keys(world: &mut World) {
     // Don't process entity keys when a text input is focused
     let has_input_focus = world.resource::<InputFocus>().0.is_some();
     if has_input_focus {

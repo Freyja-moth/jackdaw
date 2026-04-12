@@ -144,6 +144,8 @@ impl Plugin for EditorPlugin {
             .add_plugins(jackdaw_avian_integration::simulation::PhysicsSimulationPlugin)
             .add_plugins(physics_brush_bridge::PhysicsBrushBridgePlugin)
             .add_plugins(physics_tool::PhysicsToolPlugin)
+            .add_plugins(jackdaw_node_graph::NodeGraphPlugin)
+            .add_plugins(jackdaw_animation::AnimationPlugin)
             .configure_sets(
                 Update,
                 EditorInteraction
@@ -151,7 +153,9 @@ impl Plugin for EditorPlugin {
                     .run_if(no_dialog_open),
             )
             .insert_resource(UiTheme(create_dark_theme()))
-            .init_resource::<layout::ActiveWorkspace>()
+            .init_resource::<layout::ActiveDocument>()
+            .init_resource::<layout::SceneViewPreset>()
+            .init_resource::<layout::ActiveDockWindow>()
             .init_resource::<layout::KeybindHelpPopover>()
             .init_resource::<asset_catalog::AssetCatalog>()
             .init_resource::<jackdaw_jsn::SceneJsnAst>()
@@ -168,14 +172,32 @@ impl Plugin for EditorPlugin {
                     layout::update_toolbar_tooltips,
                     layout::update_space_toggle_label,
                     layout::update_edit_tool_highlights,
-                    layout::update_workspace_visibility,
-                    layout::update_tab_highlights,
+                    layout::update_active_document_display,
+                    layout::update_tab_strip_highlights,
+                    layout::update_dock_body_visibility,
+                    layout::update_dock_sidebar_highlights,
                     auto_hide_internal_entities,
+                    decorate_timeline_tooltips,
+                    discover_gltf_clips,
+                    register_animation_entities_in_ast,
+                    follow_scene_selection_to_clip,
+                    sync_selected_keyframes_from_selection,
+                    handle_keyframe_delete_intercept.before(entity_ops::handle_entity_keys),
+                    handle_timeline_shortcuts.before(entity_ops::handle_entity_keys),
                 )
                     .run_if(in_state(AppState::Editor)),
             )
             .add_observer(on_scroll)
-            .add_observer(handle_menu_action);
+            .add_observer(handle_menu_action)
+            .add_observer(on_create_clip_for_selection)
+            .add_observer(on_create_blend_graph_for_selection)
+            .add_observer(on_header_new_clip)
+            .add_observer(on_header_new_blend_graph)
+            .add_observer(on_clip_selector_change)
+            .add_observer(on_clip_name_commit)
+            .add_observer(on_duration_input_commit)
+            .add_observer(on_timeline_keyframe_click)
+            .add_observer(layout::on_dock_sidebar_icon_click);
     }
 }
 
@@ -221,6 +243,1302 @@ fn auto_hide_internal_entities(
 fn spawn_layout(mut commands: Commands, icon_font: Res<jackdaw_feathers::icons::IconFont>) {
     commands.spawn((Camera2d, EditorEntity));
     commands.spawn(layout::editor_layout(&icon_font));
+}
+
+/// Observer: the header "+" button spawns a new keyframe clip on
+/// the same entity as the currently-selected clip. Reuses the same
+/// creation logic as `on_create_clip_for_selection` but sources the
+/// parent from the active clip's `ChildOf`, not from `Selection`.
+fn on_header_new_clip(
+    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    buttons: Query<(), With<jackdaw_animation::TimelineHeaderNewClipButton>>,
+    selected_clip: Res<jackdaw_animation::SelectedClip>,
+    parents: Query<&ChildOf>,
+    names: Query<&Name>,
+    mut commands: Commands,
+) {
+    if !buttons.contains(event.entity) {
+        return;
+    }
+    let Some(clip_entity) = selected_clip.0 else {
+        return;
+    };
+    let Ok(clip_parent) = parents.get(clip_entity) else {
+        return;
+    };
+    let target = clip_parent.parent();
+    let Ok(name) = names.get(target) else {
+        return;
+    };
+    let target_name = name.as_str().to_string();
+
+    commands.queue(move |world: &mut World| {
+        let clip = world
+            .spawn((
+                jackdaw_animation::Clip::default(),
+                Name::new(format!("{target_name} Clip")),
+                ChildOf(target),
+            ))
+            .id();
+        world.spawn((
+            jackdaw_animation::AnimationTrack::new(
+                "bevy_transform::components::transform::Transform",
+                "translation",
+            ),
+            Name::new(format!("{target_name} / translation")),
+            ChildOf(clip),
+        ));
+        if let Some(mut selected) = world.get_resource_mut::<jackdaw_animation::SelectedClip>() {
+            selected.0 = Some(clip);
+        }
+        if let Some(mut dirty) = world.get_resource_mut::<jackdaw_animation::TimelineDirty>() {
+            dirty.0 = true;
+        }
+    });
+}
+
+/// Observer: the header blend-graph button spawns a new blend graph
+/// clip on the same entity as the currently-selected clip.
+fn on_header_new_blend_graph(
+    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    buttons: Query<(), With<jackdaw_animation::TimelineHeaderNewBlendGraphButton>>,
+    selected_clip: Res<jackdaw_animation::SelectedClip>,
+    parents: Query<&ChildOf>,
+    names: Query<&Name>,
+    mut commands: Commands,
+) {
+    if !buttons.contains(event.entity) {
+        return;
+    }
+    let Some(clip_entity) = selected_clip.0 else {
+        return;
+    };
+    let Ok(clip_parent) = parents.get(clip_entity) else {
+        return;
+    };
+    let target = clip_parent.parent();
+    let Ok(name) = names.get(target) else {
+        return;
+    };
+    let target_name = name.as_str().to_string();
+
+    commands.queue(move |world: &mut World| {
+        let clip = world
+            .spawn((
+                jackdaw_animation::Clip::default(),
+                jackdaw_animation::AnimationBlendGraph,
+                jackdaw_node_graph::NodeGraph {
+                    title: format!("{target_name} Blend Graph"),
+                },
+                jackdaw_node_graph::GraphCanvasView::default(),
+                Name::new(format!("{target_name} Blend Graph")),
+                ChildOf(target),
+            ))
+            .id();
+        world.spawn((
+            jackdaw_node_graph::GraphNode {
+                node_type: "anim.output".into(),
+                position: Vec2::new(400.0, 160.0),
+            },
+            jackdaw_animation::OutputNode,
+            Name::new("Output"),
+            ChildOf(clip),
+        ));
+        if let Some(mut selected) = world.get_resource_mut::<jackdaw_animation::SelectedClip>() {
+            selected.0 = Some(clip);
+        }
+        if let Some(mut dirty) = world.get_resource_mut::<jackdaw_animation::TimelineDirty>() {
+            dirty.0 = true;
+        }
+    });
+}
+
+/// Clip selector combobox changed. Maps the selected index to a
+/// clip entity and switches `SelectedClip`.
+fn on_clip_selector_change(
+    event: On<jackdaw_feathers::combobox::ComboBoxChangeEvent>,
+    selectors: Query<&jackdaw_animation::TimelineClipSelector>,
+    child_of_query: Query<&ChildOf>,
+    mut commands: Commands,
+) {
+    let mut current = event.entity;
+    let mut selector = None;
+    for _ in 0..6 {
+        if let Ok(s) = selectors.get(current) {
+            selector = Some(s);
+            break;
+        }
+        let Ok(parent) = child_of_query.get(current) else {
+            break;
+        };
+        current = parent.parent();
+    }
+    let Some(selector) = selector else {
+        return;
+    };
+    let idx = event.selected;
+    let Some(&clip_entity) = selector.sibling_clips.get(idx) else {
+        return;
+    };
+    commands.queue(move |world: &mut World| {
+        if let Some(mut selected) = world.get_resource_mut::<jackdaw_animation::SelectedClip>() {
+            selected.0 = Some(clip_entity);
+        }
+        if let Some(mut dirty) = world.get_resource_mut::<jackdaw_animation::TimelineDirty>() {
+            dirty.0 = true;
+        }
+    });
+}
+
+/// Observer: when the inline clip-name text_edit commits, route the
+/// rename through `SetJsnField` on the `Name` component so it
+/// participates in undo and round-trips through JSN.
+fn on_clip_name_commit(
+    event: On<jackdaw_feathers::text_edit::TextEditCommitEvent>,
+    name_inputs: Query<&jackdaw_animation::TimelineClipNameInput>,
+    child_of_query: Query<&ChildOf>,
+    names: Query<&Name>,
+    mut commands: Commands,
+) {
+    let mut current = event.entity;
+    let mut clip_entity = None;
+    for _ in 0..6 {
+        if let Ok(input) = name_inputs.get(current) {
+            clip_entity = Some(input.clip);
+            break;
+        }
+        let Ok(parent) = child_of_query.get(current) else {
+            break;
+        };
+        current = parent.parent();
+    }
+    let Some(clip_entity) = clip_entity else {
+        return;
+    };
+    let new_name = event.text.clone();
+    if new_name.is_empty() {
+        return;
+    }
+    let Ok(old_name) = names.get(clip_entity) else {
+        return;
+    };
+    if old_name.as_str() == new_name {
+        return;
+    }
+    commands.queue(move |world: &mut World| {
+        if let Some(mut name) = world.get_mut::<Name>(clip_entity) {
+            *name = Name::new(new_name);
+        }
+        if let Some(mut dirty) = world.get_resource_mut::<jackdaw_animation::TimelineDirty>() {
+            dirty.0 = true;
+        }
+    });
+}
+
+/// One-shot decorator: when timeline header buttons appear, stamp
+/// them with `ToolbarTooltip` so the existing tooltip system picks
+/// them up on hover. Runs every frame but short-circuits via
+/// `Added<T>` filters — only fires once per button spawn.
+#[allow(clippy::type_complexity)]
+fn decorate_timeline_tooltips(
+    play: Query<Entity, Added<jackdaw_animation::TimelinePlayButton>>,
+    pause: Query<Entity, Added<jackdaw_animation::TimelinePauseButton>>,
+    stop: Query<Entity, Added<jackdaw_animation::TimelineStopButton>>,
+    new_clip: Query<Entity, Added<jackdaw_animation::TimelineHeaderNewClipButton>>,
+    new_blend: Query<Entity, Added<jackdaw_animation::TimelineHeaderNewBlendGraphButton>>,
+    mut commands: Commands,
+) {
+    for e in &play {
+        commands
+            .entity(e)
+            .insert(layout::ToolbarTooltip("Play".into()));
+    }
+    for e in &pause {
+        commands
+            .entity(e)
+            .insert(layout::ToolbarTooltip("Pause".into()));
+    }
+    for e in &stop {
+        commands
+            .entity(e)
+            .insert(layout::ToolbarTooltip("Stop".into()));
+    }
+    for e in &new_clip {
+        commands
+            .entity(e)
+            .insert(layout::ToolbarTooltip("New Clip".into()));
+    }
+    for e in &new_blend {
+        commands
+            .entity(e)
+            .insert(layout::ToolbarTooltip("New Blend Graph".into()));
+    }
+}
+
+/// Observer: when the placeholder "Create Blend Graph" button is
+/// clicked, spawn a `Clip + AnimationBlendGraph + NodeGraph +
+/// GraphCanvasView + Name` entity parented to the primary selection,
+/// plus a default `OutputNode` inside it so the canvas has
+/// something to connect to. Mirror of
+/// [`on_create_clip_for_selection`] for the node-canvas path.
+fn on_create_blend_graph_for_selection(
+    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    buttons: Query<(), With<jackdaw_animation::TimelineCreateBlendGraphButton>>,
+    selection: Res<selection::Selection>,
+    names: Query<&Name>,
+    mut commands: Commands,
+) {
+    if !buttons.contains(event.entity) {
+        return;
+    }
+    let Some(&primary) = selection.entities.last() else {
+        warn!("Create Blend Graph: no entity selected");
+        return;
+    };
+    let Ok(name) = names.get(primary) else {
+        warn!(
+            "Create Blend Graph: selected entity has no Name — give it one in the inspector first"
+        );
+        return;
+    };
+    let target_name = name.as_str().to_string();
+
+    commands.queue(move |world: &mut World| {
+        // The blend graph clip is BOTH a `Clip` and a `NodeGraph` —
+        // the canvas widget consumes the NodeGraph side of that
+        // entity, and the timeline dock consumes the Clip side. That
+        // means children are GraphNodes + Connections rather than
+        // AnimationTracks, but `compile_clips` already skips entities
+        // marked with `AnimationBlendGraph`, and `rebuild_timeline`
+        // branches on the same marker to spawn a canvas instead of
+        // the keyframe strip.
+        let clip_entity = world
+            .spawn((
+                jackdaw_animation::Clip::default(),
+                jackdaw_animation::AnimationBlendGraph,
+                jackdaw_node_graph::NodeGraph {
+                    title: format!("{target_name} Blend Graph"),
+                },
+                jackdaw_node_graph::GraphCanvasView::default(),
+                Name::new(format!("{target_name} Blend Graph")),
+                ChildOf(primary),
+            ))
+            .id();
+
+        // Default Output node so the canvas isn't empty on creation
+        // and the user has a clear target to wire their Clip
+        // Reference into. Positioned near the top-right so there's
+        // room for source nodes to the left.
+        world.spawn((
+            jackdaw_node_graph::GraphNode {
+                node_type: "anim.output".into(),
+                position: Vec2::new(400.0, 160.0),
+            },
+            jackdaw_animation::OutputNode,
+            Name::new("Output"),
+            ChildOf(clip_entity),
+        ));
+
+        if let Some(mut selected) = world.get_resource_mut::<jackdaw_animation::SelectedClip>() {
+            selected.0 = Some(clip_entity);
+        }
+        if let Some(mut dirty) = world.get_resource_mut::<jackdaw_animation::TimelineDirty>() {
+            dirty.0 = true;
+        }
+    });
+}
+
+/// Observer: when the placeholder "Create Clip for Selection" button
+/// is clicked, spawn a new `Clip` + `Name` + default `AnimationTrack` for
+/// the primary selected entity, directly via `SpawnEntity`. The
+/// animation crate deliberately exports no custom commands — this is
+/// the minimum-wrapping form of "create a clip."
+fn on_create_clip_for_selection(
+    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    buttons: Query<(), With<jackdaw_animation::TimelineCreateClipButton>>,
+    selection: Res<selection::Selection>,
+    names: Query<&Name>,
+    mut commands: Commands,
+) {
+    if !buttons.contains(event.entity) {
+        return;
+    }
+    let Some(&primary) = selection.entities.last() else {
+        warn!("Create Clip: no entity selected");
+        return;
+    };
+    let Ok(name) = names.get(primary) else {
+        warn!("Create Clip: selected entity has no Name — give it one in the inspector first");
+        return;
+    };
+    let target_name = name.as_str().to_string();
+
+    commands.queue(move |world: &mut World| {
+        // Spawn clip entity *as a child of the target*. The clip's
+        // position in the hierarchy is what encodes "this animates
+        // that" — compile/bind/snapshot all walk up from the clip to
+        // the parent to find the target. Deletion cascades naturally
+        // and renaming the target can't silently break the clip
+        // because the target is a live Entity reference, not a
+        // String.
+        let clip_entity = world
+            .spawn((
+                jackdaw_animation::Clip::default(),
+                Name::new(format!("{target_name} Clip")),
+                ChildOf(primary),
+            ))
+            .id();
+
+        // Default translation track as a child of the clip.
+        world.spawn((
+            jackdaw_animation::AnimationTrack::new(
+                "bevy_transform::components::transform::Transform",
+                "translation",
+            ),
+            Name::new(format!("{target_name} / translation")),
+            ChildOf(clip_entity),
+        ));
+
+        if let Some(mut selected) = world.get_resource_mut::<jackdaw_animation::SelectedClip>() {
+            selected.0 = Some(clip_entity);
+        }
+        if let Some(mut dirty) = world.get_resource_mut::<jackdaw_animation::TimelineDirty>() {
+            dirty.0 = true;
+        }
+    });
+}
+
+/// Keep [`jackdaw_animation::SelectedClip`] in lockstep with the main
+/// editor's [`selection::Selection`] resource so the timeline widget
+/// shows the clip relevant to whatever the user is currently working
+/// with.
+///
+/// Two cases are actively updated:
+/// - **A.** Primary selection is already an animation entity (clip,
+///   track, or keyframe) — walk up `ChildOf` until we hit the owning
+///   `Clip` marker and select that.
+/// - **B.** Primary selection is a regular scene entity — find the
+///   first `Clip` among its `Children` and select it. Since clips
+///   now live parented to their target, this is a structural lookup
+///   rather than a name-based scan.
+///
+/// **Empty selection is deliberately a no-op.** After deleting a
+/// keyframe the main `delete_selected` path clears `Selection`; if
+/// we also cleared `SelectedClip` here the timeline would bounce to
+/// its placeholder after every keyframe delete. The stale case —
+/// deleting a brush cascades through `ChildOf` and takes its clip
+/// with it — is already handled by `rebuild_timeline`, which falls
+/// through to the placeholder when `clips.get(selected.0)` fails.
+///
+/// Lives here rather than in `jackdaw_animation` because the animation
+/// crate must not import the main editor's `Selection` type.
+fn follow_scene_selection_to_clip(
+    selection: Res<selection::Selection>,
+    mut selected_clip: ResMut<jackdaw_animation::SelectedClip>,
+    parents: Query<&ChildOf>,
+    entity_children: Query<&Children>,
+    clip_marker: Query<(), With<jackdaw_animation::Clip>>,
+) {
+    if !selection.is_changed() {
+        return;
+    }
+    // Empty selection: keep the current clip active so keyframe
+    // deletes (which clear `Selection`) don't also reset the
+    // timeline's context.
+    let Some(&primary) = selection.entities.last() else {
+        return;
+    };
+
+    // Case A: primary is a clip/track/keyframe; walk up to the clip.
+    let mut cursor = primary;
+    for _ in 0..8 {
+        if clip_marker.contains(cursor) {
+            if selected_clip.0 != Some(cursor) {
+                selected_clip.0 = Some(cursor);
+            }
+            return;
+        }
+        let Ok(parent) = parents.get(cursor) else {
+            break;
+        };
+        cursor = parent.parent();
+    }
+
+    // Case B: primary is a regular scene entity; pick the first Clip
+    // child under it.
+    if let Ok(children) = entity_children.get(primary) {
+        for child in children.iter() {
+            if clip_marker.contains(child) {
+                if selected_clip.0 != Some(child) {
+                    selected_clip.0 = Some(child);
+                }
+                return;
+            }
+        }
+    }
+
+    // Case C: the selected entity is not an animation entity and has
+    // no clip children. Clear the active clip so the timeline shows
+    // the placeholder with "Create Clip" / "Create Blend Graph".
+    // This is distinct from the empty-selection guard at the top —
+    // empty selection preserves the clip (so keyframe deletes don't
+    // bounce the timeline), but selecting a clipless entity is an
+    // explicit context switch.
+    selected_clip.0 = None;
+}
+
+/// Typed, undo-aware delete command for animation keyframes.
+///
+/// We don't reuse [`commands::DespawnEntity`] for keyframes because
+/// that path round-trips through Bevy's `DynamicScene::write_to_world`,
+/// which doesn't play well with entity ID reuse: after despawn,
+/// Bevy may reissue the keyframe's slot to a later-spawned entity,
+/// and an undo that restores the snapshot at the original ID can
+/// end up clobbering whatever is living at that slot now (the user
+/// saw this as "Ctrl+Z deletes my brush").
+///
+/// This command captures the keyframe's fields directly — `time`,
+/// `value`, and parent `track` — and on undo spawns a **fresh**
+/// entity with those fields parented to the original track. No
+/// ID reuse, no `DynamicScene`, no surprises.
+enum DespawnKeyframeCmd {
+    Vec3 {
+        /// Current entity id. Updated after each undo so redo knows
+        /// which live entity to despawn.
+        keyframe: Entity,
+        track: Entity,
+        time: f32,
+        value: Vec3,
+    },
+    Quat {
+        keyframe: Entity,
+        track: Entity,
+        time: f32,
+        value: Quat,
+    },
+    F32 {
+        keyframe: Entity,
+        track: Entity,
+        time: f32,
+        value: f32,
+    },
+}
+
+impl jackdaw_commands::EditorCommand for DespawnKeyframeCmd {
+    fn execute(&mut self, world: &mut World) {
+        let entity = match self {
+            Self::Vec3 { keyframe, .. }
+            | Self::Quat { keyframe, .. }
+            | Self::F32 { keyframe, .. } => *keyframe,
+        };
+        if let Ok(ent) = world.get_entity_mut(entity) {
+            ent.despawn();
+        }
+    }
+
+    fn undo(&mut self, world: &mut World) {
+        let new_id = match self {
+            Self::Vec3 {
+                track, time, value, ..
+            } => world
+                .spawn((
+                    jackdaw_animation::Vec3Keyframe {
+                        time: *time,
+                        value: *value,
+                    },
+                    ChildOf(*track),
+                ))
+                .id(),
+            Self::Quat {
+                track, time, value, ..
+            } => world
+                .spawn((
+                    jackdaw_animation::QuatKeyframe {
+                        time: *time,
+                        value: *value,
+                    },
+                    ChildOf(*track),
+                ))
+                .id(),
+            Self::F32 {
+                track, time, value, ..
+            } => world
+                .spawn((
+                    jackdaw_animation::F32Keyframe {
+                        time: *time,
+                        value: *value,
+                    },
+                    ChildOf(*track),
+                ))
+                .id(),
+        };
+        match self {
+            Self::Vec3 { keyframe, .. }
+            | Self::Quat { keyframe, .. }
+            | Self::F32 { keyframe, .. } => *keyframe = new_id,
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Delete keyframe"
+    }
+}
+
+impl DespawnKeyframeCmd {
+    /// Try to build a despawn command for `entity`. Returns `None`
+    /// if the entity doesn't have any of the known keyframe
+    /// component types, so the caller can fall through to a
+    /// generic despawn.
+    fn try_from_entity(world: &World, entity: Entity) -> Option<Self> {
+        let track = world.get::<ChildOf>(entity).map(|c| c.parent())?;
+        if let Some(kf) = world.get::<jackdaw_animation::Vec3Keyframe>(entity) {
+            return Some(Self::Vec3 {
+                keyframe: entity,
+                track,
+                time: kf.time,
+                value: kf.value,
+            });
+        }
+        if let Some(kf) = world.get::<jackdaw_animation::QuatKeyframe>(entity) {
+            return Some(Self::Quat {
+                keyframe: entity,
+                track,
+                time: kf.time,
+                value: kf.value,
+            });
+        }
+        if let Some(kf) = world.get::<jackdaw_animation::F32Keyframe>(entity) {
+            return Some(Self::F32 {
+                keyframe: entity,
+                track,
+                time: kf.time,
+                value: kf.value,
+            });
+        }
+        None
+    }
+}
+
+/// Interceptor that runs before [`entity_ops::handle_entity_keys`]
+/// and steals the Delete key for any selected keyframe entities.
+/// Each keyframe gets wrapped in a [`DespawnKeyframeCmd`], the
+/// commands are grouped and pushed onto the history, and the
+/// keyframes are removed from [`selection::Selection`] so the
+/// downstream generic delete handler ignores them.
+///
+/// Mixed selections (keyframes + a scene entity) work: this system
+/// handles the keyframes, then `handle_entity_keys` handles the
+/// remaining non-keyframe entities normally. Both halves land on
+/// the history as independent commands, which is fine — undo
+/// reverses them in push order.
+fn handle_keyframe_delete_intercept(world: &mut World) {
+    let keyboard = world.resource::<ButtonInput<KeyCode>>();
+    let keybinds = world.resource::<crate::keybinds::KeybindRegistry>();
+    if !keybinds.just_pressed(crate::keybinds::EditorAction::Delete, keyboard) {
+        return;
+    }
+
+    // Don't process delete while a text input is focused — matches
+    // the guard in `handle_entity_keys`.
+    if world
+        .resource::<bevy::input_focus::InputFocus>()
+        .0
+        .is_some()
+    {
+        return;
+    }
+
+    let selected: Vec<Entity> = world.resource::<selection::Selection>().entities.clone();
+    if selected.is_empty() {
+        return;
+    }
+
+    // Split the selection into keyframe entities and everything else.
+    let mut kf_cmds: Vec<Box<dyn jackdaw_commands::EditorCommand>> = Vec::new();
+    let mut keyframe_ids: Vec<Entity> = Vec::new();
+    for &entity in &selected {
+        if let Some(cmd) = DespawnKeyframeCmd::try_from_entity(world, entity) {
+            keyframe_ids.push(entity);
+            kf_cmds.push(Box::new(cmd));
+        }
+    }
+
+    if kf_cmds.is_empty() {
+        return;
+    }
+
+    // Strip the keyframes out of Selection so the downstream
+    // generic delete path doesn't see them.
+    {
+        let mut selection = world.resource_mut::<selection::Selection>();
+        selection.entities.retain(|e| !keyframe_ids.contains(e));
+    }
+    for entity in &keyframe_ids {
+        if let Ok(mut ent) = world.get_entity_mut(*entity) {
+            ent.remove::<selection::Selected>();
+        }
+    }
+
+    // Execute each keyframe despawn and wrap them in a single
+    // group so Ctrl+Z undoes the whole delete at once.
+    for cmd in &mut kf_cmds {
+        cmd.execute(world);
+    }
+    let group = commands::CommandGroup {
+        commands: kf_cmds,
+        label: "Delete keyframes".to_string(),
+    };
+    let mut history = world.resource_mut::<jackdaw_commands::CommandHistory>();
+    history.undo_stack.push(Box::new(group));
+    history.redo_stack.clear();
+}
+
+/// Typed, undo-aware spawn command for animation keyframes. Mirror of
+/// [`DespawnKeyframeCmd`] — execute spawns a fresh entity with the
+/// stored fields parented to the track, undo despawns it. Same ID-
+/// reuse avoidance rationale: direct `world.spawn` rather than
+/// `DynamicScene`.
+///
+/// Used by the keyframe paste path (`handle_keyframe_copy_paste`) so
+/// pasting is undoable as a single `CommandGroup`.
+enum SpawnKeyframeCmd {
+    Vec3 {
+        /// Filled in by `execute`; `None` before the first execute.
+        keyframe: Option<Entity>,
+        track: Entity,
+        time: f32,
+        value: Vec3,
+    },
+    Quat {
+        keyframe: Option<Entity>,
+        track: Entity,
+        time: f32,
+        value: Quat,
+    },
+    F32 {
+        keyframe: Option<Entity>,
+        track: Entity,
+        time: f32,
+        value: f32,
+    },
+}
+
+impl jackdaw_commands::EditorCommand for SpawnKeyframeCmd {
+    fn execute(&mut self, world: &mut World) {
+        let new_id = match self {
+            Self::Vec3 {
+                track, time, value, ..
+            } => world
+                .spawn((
+                    jackdaw_animation::Vec3Keyframe {
+                        time: *time,
+                        value: *value,
+                    },
+                    ChildOf(*track),
+                ))
+                .id(),
+            Self::Quat {
+                track, time, value, ..
+            } => world
+                .spawn((
+                    jackdaw_animation::QuatKeyframe {
+                        time: *time,
+                        value: *value,
+                    },
+                    ChildOf(*track),
+                ))
+                .id(),
+            Self::F32 {
+                track, time, value, ..
+            } => world
+                .spawn((
+                    jackdaw_animation::F32Keyframe {
+                        time: *time,
+                        value: *value,
+                    },
+                    ChildOf(*track),
+                ))
+                .id(),
+        };
+        match self {
+            Self::Vec3 { keyframe, .. }
+            | Self::Quat { keyframe, .. }
+            | Self::F32 { keyframe, .. } => *keyframe = Some(new_id),
+        }
+    }
+
+    fn undo(&mut self, world: &mut World) {
+        let entity = match self {
+            Self::Vec3 { keyframe, .. }
+            | Self::Quat { keyframe, .. }
+            | Self::F32 { keyframe, .. } => *keyframe,
+        };
+        if let Some(entity) = entity
+            && let Ok(ent) = world.get_entity_mut(entity)
+        {
+            ent.despawn();
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Paste keyframe"
+    }
+}
+
+/// Combined handler for timeline keyboard shortcuts that need to
+/// intercept before [`entity_ops::handle_entity_keys`]:
+///
+/// - **Arrow keys** (Left/Right/Home/End) step the playhead when the
+///   timeline dock window is active. Consumes the key input via
+///   [`ButtonInput::clear_just_pressed`] so the entity nudge handler
+///   doesn't also slide a selected brush.
+/// - **Ctrl+C** copies the currently-selected keyframes (if any) into
+///   [`jackdaw_animation::KeyframeClipboard`], then consumes the key
+///   so the generic component-copy path doesn't also fire.
+/// - **Ctrl+V** pastes clipboard keyframes onto the
+///   [`jackdaw_animation::SelectedClip`] at the current cursor time,
+///   wrapped in a [`commands::CommandGroup`] of [`SpawnKeyframeCmd`]s
+///   for atomic undo.
+///
+/// All three gate on `InputFocus` being empty so typing in a text
+/// field doesn't trigger the timeline shortcuts.
+fn handle_timeline_shortcuts(world: &mut World) {
+    if world
+        .resource::<bevy::input_focus::InputFocus>()
+        .0
+        .is_some()
+    {
+        return;
+    }
+
+    let (ctrl, shift) = {
+        let keyboard = world.resource::<ButtonInput<KeyCode>>();
+        (
+            keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]),
+            keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
+        )
+    };
+
+    let timeline_active =
+        world.resource::<layout::ActiveDockWindow>().0 == layout::DockWindowKind::Timeline;
+    if timeline_active && !ctrl {
+        handle_timeline_scrub_keys(world, shift);
+    }
+
+    if ctrl {
+        handle_keyframe_copy(world);
+        handle_keyframe_paste(world);
+    }
+}
+
+/// Step the timeline cursor with arrow keys, Home, and End. Called
+/// from [`handle_timeline_shortcuts`] when the timeline dock window
+/// is active and no modifier (other than Shift) is held.
+///
+/// - Left / Right: step by one ruler tick, using the same
+///   [`jackdaw_animation::pick_tick_step`] the timeline widget uses.
+/// - Shift+Left / Shift+Right: jump to the previous / next keyframe
+///   time across all tracks in the selected clip. Falls back to the
+///   clip boundary (0 or `duration`) when there is no earlier /
+///   later keyframe.
+/// - Home / End: jump to the start / end of the clip.
+fn handle_timeline_scrub_keys(world: &mut World, shift: bool) {
+    let (left, right, home, end) = {
+        let keyboard = world.resource::<ButtonInput<KeyCode>>();
+        (
+            keyboard.just_pressed(KeyCode::ArrowLeft),
+            keyboard.just_pressed(KeyCode::ArrowRight),
+            keyboard.just_pressed(KeyCode::Home),
+            keyboard.just_pressed(KeyCode::End),
+        )
+    };
+    if !left && !right && !home && !end {
+        return;
+    }
+    let Some(clip_entity) = world.resource::<jackdaw_animation::SelectedClip>().0 else {
+        return;
+    };
+    let Some(clip) = world.get::<jackdaw_animation::Clip>(clip_entity).copied() else {
+        return;
+    };
+    let duration = clip.duration.max(0.01);
+    let current_time = world
+        .resource::<jackdaw_animation::TimelineCursor>()
+        .seek_time;
+
+    let new_time = if home {
+        0.0
+    } else if end {
+        duration
+    } else if shift {
+        let times = collect_clip_keyframe_times(world, clip_entity);
+        if left {
+            times
+                .iter()
+                .copied()
+                .filter(|t| *t < current_time - 1e-4)
+                .fold(0.0_f32, f32::max)
+        } else {
+            times
+                .iter()
+                .copied()
+                .filter(|t| *t > current_time + 1e-4)
+                .fold(duration, f32::min)
+        }
+    } else {
+        let step = jackdaw_animation::pick_tick_step(duration);
+        let dir = if left { -1.0 } else { 1.0 };
+        (current_time + dir * step).clamp(0.0, duration)
+    };
+
+    world.write_message(jackdaw_animation::AnimationSeek(new_time));
+
+    // Consume the arrow/home/end presses so the entity nudge handler
+    // downstream doesn't also move a brush this frame.
+    let mut keyboard = world.resource_mut::<ButtonInput<KeyCode>>();
+    keyboard.clear_just_pressed(KeyCode::ArrowLeft);
+    keyboard.clear_just_pressed(KeyCode::ArrowRight);
+    keyboard.clear_just_pressed(KeyCode::Home);
+    keyboard.clear_just_pressed(KeyCode::End);
+}
+
+/// Gather every keyframe time on the clip, across all tracks and
+/// all typed keyframe components. Used by the shift+arrow "step to
+/// adjacent keyframe" path.
+fn collect_clip_keyframe_times(world: &World, clip_entity: Entity) -> Vec<f32> {
+    let mut times = Vec::new();
+    let Some(clip_children) = world.get::<Children>(clip_entity) else {
+        return times;
+    };
+    let track_entities: Vec<Entity> = clip_children.iter().collect();
+    for track in track_entities {
+        let Some(track_children) = world.get::<Children>(track) else {
+            continue;
+        };
+        for kf in track_children.iter() {
+            if let Some(k) = world.get::<jackdaw_animation::Vec3Keyframe>(kf) {
+                times.push(k.time);
+            } else if let Some(k) = world.get::<jackdaw_animation::QuatKeyframe>(kf) {
+                times.push(k.time);
+            } else if let Some(k) = world.get::<jackdaw_animation::F32Keyframe>(kf) {
+                times.push(k.time);
+            }
+        }
+    }
+    times
+}
+
+/// Handle Ctrl+C when any keyframe is in the current selection: copy
+/// a snapshot of each keyframe into [`KeyframeClipboard`] and consume
+/// the key so the generic component-copy path doesn't also serialize
+/// them. Times are stored relative to the earliest copied keyframe
+/// so a later paste reconstructs the spacing anchored at the cursor.
+///
+/// [`KeyframeClipboard`]: jackdaw_animation::KeyframeClipboard
+fn handle_keyframe_copy(world: &mut World) {
+    if !world
+        .resource::<ButtonInput<KeyCode>>()
+        .just_pressed(KeyCode::KeyC)
+    {
+        return;
+    }
+    let selected: Vec<Entity> = world.resource::<selection::Selection>().entities.clone();
+    if selected.is_empty() {
+        return;
+    }
+
+    let mut entries: Vec<(f32, jackdaw_animation::KeyframeClipboardEntry)> = Vec::new();
+    for &entity in &selected {
+        let Some(track_entity) = world.get::<ChildOf>(entity).map(|c| c.parent()) else {
+            continue;
+        };
+        let Some(track) = world.get::<jackdaw_animation::AnimationTrack>(track_entity) else {
+            continue;
+        };
+        let component_type_path = track.component_type_path.clone();
+        let field_path = track.field_path.clone();
+
+        if let Some(kf) = world.get::<jackdaw_animation::Vec3Keyframe>(entity) {
+            entries.push((
+                kf.time,
+                jackdaw_animation::KeyframeClipboardEntry {
+                    component_type_path,
+                    field_path,
+                    relative_time: kf.time,
+                    value: jackdaw_animation::KeyframeValue::Vec3(kf.value),
+                },
+            ));
+        } else if let Some(kf) = world.get::<jackdaw_animation::QuatKeyframe>(entity) {
+            entries.push((
+                kf.time,
+                jackdaw_animation::KeyframeClipboardEntry {
+                    component_type_path,
+                    field_path,
+                    relative_time: kf.time,
+                    value: jackdaw_animation::KeyframeValue::Quat(kf.value),
+                },
+            ));
+        } else if let Some(kf) = world.get::<jackdaw_animation::F32Keyframe>(entity) {
+            entries.push((
+                kf.time,
+                jackdaw_animation::KeyframeClipboardEntry {
+                    component_type_path,
+                    field_path,
+                    relative_time: kf.time,
+                    value: jackdaw_animation::KeyframeValue::F32(kf.value),
+                },
+            ));
+        }
+    }
+
+    if entries.is_empty() {
+        return;
+    }
+
+    // Normalize times: relative_time = original_time - min(original_time).
+    let base = entries
+        .iter()
+        .map(|(t, _)| *t)
+        .fold(f32::INFINITY, f32::min);
+    let mut normalized: Vec<jackdaw_animation::KeyframeClipboardEntry> = entries
+        .into_iter()
+        .map(|(_, mut entry)| {
+            entry.relative_time -= base;
+            entry
+        })
+        .collect();
+    // Sort by relative time for deterministic paste ordering.
+    normalized.sort_by(|a, b| a.relative_time.partial_cmp(&b.relative_time).unwrap());
+
+    let count = normalized.len();
+    world
+        .resource_mut::<jackdaw_animation::KeyframeClipboard>()
+        .entries = normalized;
+    world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .clear_just_pressed(KeyCode::KeyC);
+    info!("Copied {count} keyframe(s) to animation clipboard");
+}
+
+/// Handle Ctrl+V: if the animation clipboard is non-empty and a clip
+/// is selected, re-spawn each clipboard entry as a new keyframe
+/// parented to the clip's matching track at `cursor_time +
+/// relative_time`. Entries whose property address doesn't resolve to
+/// an existing track on the current clip are skipped with a warning.
+///
+/// Each spawn is wrapped in a [`SpawnKeyframeCmd`] and all commands
+/// are pushed as a single [`commands::CommandGroup`] so Ctrl+Z undoes
+/// the entire paste at once.
+fn handle_keyframe_paste(world: &mut World) {
+    if !world
+        .resource::<ButtonInput<KeyCode>>()
+        .just_pressed(KeyCode::KeyV)
+    {
+        return;
+    }
+    let entries = world
+        .resource::<jackdaw_animation::KeyframeClipboard>()
+        .entries
+        .clone();
+    if entries.is_empty() {
+        return;
+    }
+    let Some(clip_entity) = world.resource::<jackdaw_animation::SelectedClip>().0 else {
+        return;
+    };
+    let cursor_time = world
+        .resource::<jackdaw_animation::TimelineCursor>()
+        .seek_time;
+
+    // Resolve each entry's target track by property address. Collect
+    // the list of tracks under the clip once up front.
+    let mut tracks: Vec<(Entity, String, String)> = Vec::new();
+    if let Some(children) = world.get::<Children>(clip_entity) {
+        for child in children.iter() {
+            if let Some(track) = world.get::<jackdaw_animation::AnimationTrack>(child) {
+                tracks.push((
+                    child,
+                    track.component_type_path.clone(),
+                    track.field_path.clone(),
+                ));
+            }
+        }
+    }
+
+    let mut cmds: Vec<Box<dyn jackdaw_commands::EditorCommand>> = Vec::new();
+    let mut max_paste_time = cursor_time;
+    for entry in &entries {
+        let track_entity = tracks.iter().find_map(|(e, tp, fp)| {
+            (tp == &entry.component_type_path && fp == &entry.field_path).then_some(*e)
+        });
+        let Some(track_entity) = track_entity else {
+            warn!(
+                "Paste keyframe: no track for {}.{} on selected clip — add one via the inspector diamond first",
+                entry.component_type_path, entry.field_path,
+            );
+            continue;
+        };
+        let paste_time = cursor_time + entry.relative_time;
+        max_paste_time = max_paste_time.max(paste_time);
+        let cmd: Box<dyn jackdaw_commands::EditorCommand> = match entry.value {
+            jackdaw_animation::KeyframeValue::Vec3(v) => Box::new(SpawnKeyframeCmd::Vec3 {
+                keyframe: None,
+                track: track_entity,
+                time: paste_time,
+                value: v,
+            }),
+            jackdaw_animation::KeyframeValue::Quat(q) => Box::new(SpawnKeyframeCmd::Quat {
+                keyframe: None,
+                track: track_entity,
+                time: paste_time,
+                value: q,
+            }),
+            jackdaw_animation::KeyframeValue::F32(f) => Box::new(SpawnKeyframeCmd::F32 {
+                keyframe: None,
+                track: track_entity,
+                time: paste_time,
+                value: f,
+            }),
+        };
+        cmds.push(cmd);
+    }
+
+    if cmds.is_empty() {
+        return;
+    }
+
+    // Auto-extend the clip duration if the paste lands beyond the
+    // current authored range. Matches the behavior of
+    // `handle_add_keyframe_click` in the animation crate.
+    if let Some(mut clip) = world.get_mut::<jackdaw_animation::Clip>(clip_entity)
+        && max_paste_time > clip.duration
+    {
+        clip.duration = max_paste_time;
+    }
+
+    for cmd in &mut cmds {
+        cmd.execute(world);
+    }
+    let count = cmds.len();
+    let group = commands::CommandGroup {
+        commands: cmds,
+        label: "Paste keyframes".to_string(),
+    };
+    let mut history = world.resource_mut::<jackdaw_commands::CommandHistory>();
+    history.undo_stack.push(Box::new(group));
+    history.redo_stack.clear();
+    world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .clear_just_pressed(KeyCode::KeyV);
+
+    if let Some(mut dirty) = world.get_resource_mut::<jackdaw_animation::TimelineDirty>() {
+        dirty.0 = true;
+    }
+    info!("Pasted {count} keyframe(s) from animation clipboard");
+}
+
+/// Observer: clicking a timeline keyframe diamond routes through
+/// the main editor's [`selection::Selection`] resource. Ctrl+click
+/// toggles into the existing selection; plain click replaces with
+/// just the keyframe. Delete is then handled by the main editor's
+/// existing `delete_selected` path, which wraps despawns in
+/// `DespawnEntity` commands for undo safety — the animation crate
+/// deliberately does NOT own a delete key handler, so there's no
+/// risk of double-delete when the user has both a scene entity and
+/// a keyframe "selected."
+///
+/// Propagation is stopped so the click doesn't also hit the
+/// scrubber and seek the playhead.
+fn on_timeline_keyframe_click(
+    mut event: On<Pointer<Click>>,
+    handles: Query<&jackdaw_animation::TimelineKeyframeHandle>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut selection: ResMut<selection::Selection>,
+    mut commands: Commands,
+) {
+    let Ok(handle) = handles.get(event.event_target()) else {
+        return;
+    };
+    let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    if ctrl {
+        selection.toggle(&mut commands, handle.keyframe);
+    } else {
+        selection.select_single(&mut commands, handle.keyframe);
+    }
+    event.propagate(false);
+}
+
+/// Mirror the main [`selection::Selection`] → the animation crate's
+/// [`jackdaw_animation::SelectedKeyframes`] so the timeline
+/// highlight system can tell which diamonds to light up without
+/// the animation crate needing to import `Selection` itself.
+///
+/// Runs only when `Selection` changes. Also filters out entities
+/// whose keyframe component type isn't one we know about; non-
+/// keyframe selections simply don't land in `SelectedKeyframes`.
+fn sync_selected_keyframes_from_selection(
+    selection: Res<selection::Selection>,
+    mut selected_keyframes: ResMut<jackdaw_animation::SelectedKeyframes>,
+    vec3_keyframes: Query<(), With<jackdaw_animation::Vec3Keyframe>>,
+    quat_keyframes: Query<(), With<jackdaw_animation::QuatKeyframe>>,
+    f32_keyframes: Query<(), With<jackdaw_animation::F32Keyframe>>,
+) {
+    if !selection.is_changed() {
+        return;
+    }
+    selected_keyframes.entities.clear();
+    for &entity in &selection.entities {
+        if vec3_keyframes.contains(entity)
+            || quat_keyframes.contains(entity)
+            || f32_keyframes.contains(entity)
+        {
+            selected_keyframes.entities.insert(entity);
+        }
+    }
+}
+
+/// Observer: when the timeline header's duration field commits,
+/// route the edit through `SetJsnField` so it flows through the AST
+/// and participates in undo/redo + save/load. This is the hand-off
+/// point between the animation crate (which can't import
+/// `SetJsnField`) and the editor binary.
+fn on_duration_input_commit(
+    event: On<jackdaw_feathers::text_edit::TextEditCommitEvent>,
+    duration_inputs: Query<&jackdaw_animation::TimelineDurationInput>,
+    child_of_query: Query<&ChildOf>,
+    clips: Query<&jackdaw_animation::Clip>,
+    mut commands: Commands,
+) {
+    // The commit event fires on the inner text_input entity; the
+    // `TimelineDurationInput` marker sits on the wrapper, so walk
+    // up one step to find it. Matches the pattern used by
+    // `on_material_param_commit` in material_browser.rs.
+    let mut current = event.entity;
+    let mut marker_clip: Option<Entity> = None;
+    for _ in 0..4 {
+        if let Ok(marker) = duration_inputs.get(current) {
+            marker_clip = Some(marker.clip);
+            break;
+        }
+        let Ok(child_of) = child_of_query.get(current) else {
+            break;
+        };
+        current = child_of.parent();
+    }
+
+    let Some(clip_entity) = marker_clip else {
+        return;
+    };
+    let Ok(new_value) = event.text.trim().parse::<f32>() else {
+        return;
+    };
+    let Ok(clip) = clips.get(clip_entity) else {
+        return;
+    };
+    if (new_value - clip.duration).abs() < f32::EPSILON {
+        return;
+    }
+    let old_json = serde_json::json!(clip.duration);
+    let new_json = serde_json::json!(new_value);
+    commands.queue(move |world: &mut World| {
+        let mut history = world
+            .remove_resource::<jackdaw_commands::CommandHistory>()
+            .unwrap_or_default();
+        history.execute(
+            Box::new(commands::SetJsnField {
+                entity: clip_entity,
+                type_path: "jackdaw_animation::clip::Clip".to_string(),
+                field_path: "duration".to_string(),
+                old_value: old_json,
+                new_value: new_json,
+            }),
+            world,
+        );
+        world.insert_resource(history);
+    });
+}
+
+/// After the animation crate spawns new clip/track/keyframe entities,
+/// register them in the JSN AST so they participate in save/load and
+/// undo/redo snapshotting. Runs every frame; cheap because
+/// `register_entity_in_ast` is a no-op for already-registered entities.
+fn register_animation_entities_in_ast(
+    world: &mut World,
+    params: &mut QueryState<
+        Entity,
+        Or<(
+            Added<jackdaw_animation::Clip>,
+            Added<jackdaw_animation::AnimationTrack>,
+            Added<jackdaw_animation::Vec3Keyframe>,
+            Added<jackdaw_animation::QuatKeyframe>,
+            Added<jackdaw_animation::F32Keyframe>,
+            Added<jackdaw_animation::GltfClipRef>,
+            Added<jackdaw_animation::AnimationBlendGraph>,
+            Added<jackdaw_node_graph::GraphNode>,
+            Added<jackdaw_node_graph::Connection>,
+        )>,
+    >,
+) {
+    let entities: Vec<Entity> = params.iter(world).collect();
+    for entity in entities {
+        scene_io::register_entity_in_ast(world, entity);
+    }
+}
+
+/// For every [`GltfSource`] entity whose underlying glTF asset is
+/// loaded but has not yet had its clips imported, spawn one
+/// [`jackdaw_animation::Clip`] + [`jackdaw_animation::GltfClipRef`]
+/// child per entry in `Gltf::named_animations`. Those child entities
+/// persist through JSN save/load (just two strings each), so this
+/// discovery step only needs to run once per glTF in a given session.
+///
+/// The guard — "skip if any child already has a `GltfClipRef`" — keeps
+/// us from resurrecting clips the user deleted within the session.
+/// Adding new clips to the glTF file externally requires a scene
+/// reload to rediscover them, which matches Blender's "reload glTF"
+/// semantics.
+///
+/// Lives in the main crate rather than `jackdaw_animation` because it
+/// needs to read `jackdaw_jsn::GltfSource`, and we'd rather not wire a
+/// jackdaw_jsn dep into the animation crate.
+///
+/// [`GltfSource`]: jackdaw_jsn::GltfSource
+fn discover_gltf_clips(
+    sources: Query<(Entity, &jackdaw_jsn::GltfSource, Option<&Children>)>,
+    existing_refs: Query<(), With<jackdaw_animation::GltfClipRef>>,
+    asset_server: Res<AssetServer>,
+    gltfs: Res<Assets<bevy::gltf::Gltf>>,
+    mut commands: Commands,
+) {
+    for (entity, source, children) in &sources {
+        // Skip if this GltfSource already has any imported clip
+        // children — discovery has run at least once.
+        let any_existing = children
+            .into_iter()
+            .flatten()
+            .any(|&c| existing_refs.contains(c));
+        if any_existing {
+            continue;
+        }
+
+        let handle: Handle<bevy::gltf::Gltf> = asset_server.load(&source.path);
+        let Some(gltf) = gltfs.get(&handle) else {
+            continue;
+        };
+
+        for (clip_name, _clip_handle) in &gltf.named_animations {
+            let name_str = clip_name.to_string();
+            commands.spawn((
+                jackdaw_animation::Clip::default(),
+                jackdaw_animation::GltfClipRef {
+                    gltf_path: source.path.clone(),
+                    clip_name: name_str.clone(),
+                },
+                Name::new(name_str),
+                ChildOf(entity),
+            ));
+        }
+    }
 }
 
 fn populate_menu(world: &mut World) {

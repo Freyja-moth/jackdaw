@@ -21,29 +21,111 @@ use crate::{
     viewport::SceneViewport,
 };
 
-/// Which workspace tab is active.
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ActiveWorkspace {
+/// Discriminator for the header tab kinds the editor knows how to host.
+/// New kinds will be added for animation-graph assets, shader assets, etc.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum TabKind {
+    /// The live scene being edited. There's exactly one Scene tab.
     #[default]
-    SceneEditor,
-    RemoteDebug,
+    Scene,
+    /// The Schedule Explorer / remote debug view (replaces the old
+    /// "Remote Debug" workspace). There's exactly one Schedule Explorer
+    /// tab.
+    ScheduleExplorer,
 }
 
-/// Marker for the workspace tab bar row.
-#[derive(Component)]
-pub struct WorkspaceTabBar;
+impl TabKind {
+    /// Human-readable label shown on the tab strip.
+    pub fn label(self) -> &'static str {
+        match self {
+            TabKind::Scene => "Main scene",
+            TabKind::ScheduleExplorer => "Schedule Explorer",
+        }
+    }
 
-/// Marker for a workspace tab, storing which workspace it activates.
-#[derive(Component)]
-pub struct WorkspaceTab(pub ActiveWorkspace);
+    /// Colored accent stripe drawn at the left edge of the tab.
+    pub fn accent(self) -> Color {
+        match self {
+            TabKind::Scene => tokens::DOC_TAB_SCENE_ACCENT,
+            TabKind::ScheduleExplorer => tokens::DOC_TAB_TOOL_ACCENT,
+        }
+    }
 
-/// Marker for the scene editor workspace container.
-#[derive(Component)]
-pub struct SceneEditorWorkspace;
+    /// Icon glyph rendered in the tab header.
+    pub fn icon(self) -> Icon {
+        match self {
+            TabKind::Scene => Icon::File,
+            TabKind::ScheduleExplorer => Icon::CalendarSearch,
+        }
+    }
+}
 
-/// Marker for the remote debug workspace container.
+/// Layout preset for the Scene document tab. Kept as a
+/// single-variant enum for now so future layout presets (e.g. a
+/// distraction-free shader authoring view) can slot in without
+/// reintroducing the plumbing. The old `Animation` variant was
+/// removed when the timeline became a bottom-panel tab.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SceneViewPreset {
+    #[default]
+    Scene,
+}
+
+/// The tab the editor is currently showing.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct ActiveDocument {
+    pub kind: TabKind,
+}
+
+/// Marker on the tab strip row container so the tab styling system can
+/// find its children.
 #[derive(Component)]
-pub struct RemoteDebugWorkspace;
+pub struct DocumentTabStrip;
+
+/// Marker on an individual document tab button, tagged with the
+/// `TabKind` it activates when clicked.
+#[derive(Component)]
+pub struct DocumentTabButton(pub TabKind);
+
+/// Marker on a document content container. The per-frame
+/// `update_active_document_display` system toggles `Node::display` on
+/// these so only the matching-kind container is visible.
+#[derive(Component)]
+pub struct DocumentRoot(pub TabKind);
+
+/// Marker on the center column container. Retained as a hook for
+/// systems that want to find the main viewport-plus-bottom-panels
+/// area. Formerly driven by `SceneViewPreset`; now unconditional.
+#[derive(Component)]
+pub struct SceneCenter;
+
+/// Which tool window is currently shown in the bottom dock panel.
+/// Each sidebar icon switches this resource; the
+/// [`update_dock_body_visibility`] system toggles `Display` on
+/// [`DockBody`] containers to match.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DockWindowKind {
+    Terminal,
+    #[default]
+    Assets,
+    Timeline,
+}
+
+/// Type-erased wrapper resource so we can mark the active dock
+/// window without scattering `Res<DockWindowKind>` everywhere.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct ActiveDockWindow(pub DockWindowKind);
+
+/// Marker on a clickable sidebar icon. Carries the window kind the
+/// icon selects.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub struct DockSidebarIcon(pub DockWindowKind);
+
+/// Marker on one of the body containers in the dock panel. There's
+/// one per window kind; `update_dock_body_visibility` toggles their
+/// `Display` based on [`ActiveDockWindow`].
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub struct DockBody(pub DockWindowKind);
 
 /// Marker on the hierarchy filter text input
 #[derive(Component)]
@@ -133,9 +215,9 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                         ..Default::default()
                     },
                     children![
-                    // Scene Editor workspace (active by default)
+                    // Scene document (visible by default).
                     (
-                        SceneEditorWorkspace,
+                        DocumentRoot(TabKind::Scene),
                         EditorEntity,
                         Node {
                             width: percent(100),
@@ -159,7 +241,7 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                                     // Left column: hierarchy + project files (~266px default, ratio 1)
                                     Spawn((split_panel::panel(1), left_column(font.clone()))),
                                     Spawn(split_panel::panel_handle()),
-                                    // Center column: viewport + bottom panels (ratio 4)
+                                    // Center column: Scene/Animation preset swap (ratio 4).
                                     Spawn((
                                         split_panel::panel(4),
                                         center_column(font.clone()),
@@ -171,9 +253,11 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                             ),
                         )],
                     ),
-                    // Remote Debug workspace (hidden by default)
+                    // Schedule Explorer document (hidden by default).
+                    // Formerly the Remote Debug workspace — same content,
+                    // repackaged as a document tab.
                     (
-                        RemoteDebugWorkspace,
+                        DocumentRoot(TabKind::ScheduleExplorer),
                         EditorEntity,
                         Node {
                             width: percent(100),
@@ -207,7 +291,13 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
     )
 }
 
-/// Integrated window header: \[menu bar items\] \[scene tabs\] \[controls\]
+/// Integrated window header. Two groups separated by a flexible spacer:
+/// the **left group** owns the menu bar and the document tab strip (so
+/// tabs sit right after the `Add` menu, matching the Figma mock), and
+/// the **right group** owns the Scene View combobox and the Play/Pause
+/// pill. A flex-grow spacer between them absorbs the slack, so resizing
+/// the dropdown label (e.g. `Scene View ▾` → `Animation View ▾`) can't
+/// shift the tabs.
 fn window_header() -> impl Bundle {
     (
         EditorEntity,
@@ -222,75 +312,98 @@ fn window_header() -> impl Bundle {
         },
         BackgroundColor(tokens::WINDOW_BG),
         children![
-            // Left: App name + menu bar
+            // Left: menu bar + tab strip, sitting flush to the left
+            // edge. `column_gap` pushes the tabs slightly away from the
+            // last menu item ("Add").
             (
-                // This node hosts the MenuBar + MenuBarRoot so populate_menu_bar still works
-                menu_bar::menu_bar_shell(),
-            ),
-            // Center: workspace / scene tabs
-            (
-                WorkspaceTabBar,
                 EditorEntity,
                 Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    flex_grow: 1.0,
                     height: percent(100),
-                    column_gap: px(tokens::SPACING_SM),
+                    column_gap: px(tokens::SPACING_LG),
                     ..Default::default()
                 },
                 children![
-                    scene_tab("Main scene", ActiveWorkspace::SceneEditor, true),
-                    scene_tab("Remote", ActiveWorkspace::RemoteDebug, false),
+                    menu_bar::menu_bar_shell(),
+                    (
+                        DocumentTabStrip,
+                        EditorEntity,
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            height: percent(100),
+                            column_gap: px(4.0),
+                            ..Default::default()
+                        },
+                        children![
+                            document_tab(TabKind::Scene, true),
+                            document_tab(TabKind::ScheduleExplorer, false),
+                        ],
+                    ),
                 ],
             ),
-            // Right: placeholder for play/pause controls
+            // Flexible spacer — absorbs leftover horizontal space
+            // between the left group and the right group.
+            (
+                EditorEntity,
+                Node {
+                    flex_grow: 1.0,
+                    ..Default::default()
+                },
+            ),
+            // Right: Scene View combobox + Play/Pause transport.
             (
                 EditorEntity,
                 Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                     padding: UiRect::horizontal(px(tokens::SPACING_MD)),
-                    column_gap: px(tokens::SPACING_SM),
+                    column_gap: px(6.0),
                     ..Default::default()
                 },
+                children![play_pause_controls(),],
             ),
         ],
     )
 }
 
-/// A scene tab in the header with colored accent bar.
-fn scene_tab(label: &str, workspace: ActiveWorkspace, active: bool) -> impl Bundle {
-    let accent_color = if active {
-        tokens::ACCENT_BLUE
-    } else {
-        Color::NONE
-    };
+/// A single document tab in the header strip. Carries a
+/// [`DocumentTabButton`] marker with its `TabKind`, and an inline click
+/// observer that flips [`ActiveDocument`] to that kind. Styling is
+/// refreshed every frame by [`update_tab_strip_highlights`].
+fn document_tab(kind: TabKind, active: bool) -> impl Bundle {
     let bg = if active {
-        Color::srgba(1.0, 1.0, 1.0, 0.08)
+        tokens::DOC_TAB_ACTIVE_BG
     } else {
         Color::NONE
     };
-    let text_color = if active {
-        tokens::TEXT_PRIMARY
+    let border = if active {
+        tokens::DOC_TAB_ACTIVE_BORDER
     } else {
-        tokens::TEXT_SECONDARY
+        Color::NONE
+    };
+    let label_color = if active {
+        tokens::DOC_TAB_ACTIVE_LABEL
+    } else {
+        tokens::DOC_TAB_INACTIVE_LABEL
     };
     (
-        WorkspaceTab(workspace),
-        Interaction::default(),
+        DocumentTabButton(kind),
+        Hovered::default(),
         Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             padding: UiRect::axes(px(7.0), px(4.0)),
             column_gap: px(5.0),
+            border: UiRect::all(px(1.0)),
             border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
             ..Default::default()
         },
         BackgroundColor(bg),
+        BorderColor::all(border),
         children![
-            // Colored accent bar (2.5x12px)
+            // 2.5×12 accent stripe keyed off the TabKind.
             (
                 Node {
                     width: px(2.5),
@@ -298,37 +411,80 @@ fn scene_tab(label: &str, workspace: ActiveWorkspace, active: bool) -> impl Bund
                     border_radius: BorderRadius::all(px(5.0)),
                     ..Default::default()
                 },
-                BackgroundColor(accent_color),
+                BackgroundColor(kind.accent()),
             ),
-            // Icon
+            // 12×12 lucide icon.
             (
-                Text::new(String::from(Icon::File.unicode())),
+                Text::new(String::from(kind.icon().unicode())),
                 TextFont {
                     font_size: 12.0,
                     ..Default::default()
                 },
-                TextColor(text_color),
+                TextColor(label_color),
             ),
-            // Label
+            // Label.
             (
-                Text::new(label.to_string()),
+                Text::new(kind.label().to_string()),
                 TextFont {
-                    font_size: tokens::TEXT_SIZE_LG,
+                    font_size: tokens::FONT_MD,
                     ..Default::default()
                 },
-                TextColor(text_color),
+                TextColor(label_color),
             ),
         ],
         observe(
             move |_: On<Pointer<Click>>,
-                  mut workspace_res: ResMut<ActiveWorkspace>,
+                  mut active: ResMut<ActiveDocument>,
                   manager: Res<ConnectionManager>| {
-                if workspace == ActiveWorkspace::RemoteDebug && !manager.is_connected() {
+                // Keep the "Remote disconnected ⇒ can't open" guard from
+                // the old workspace tab, now gating the Schedule Explorer.
+                if kind == TabKind::ScheduleExplorer && !manager.is_connected() {
                     return;
                 }
-                *workspace_res = workspace;
+                active.kind = kind;
             },
         ),
+    )
+}
+
+/// Play/Pause transport pill. Visual placeholder — the editor doesn't
+/// have a play mode yet, so these buttons are no-ops. Phase 5's
+/// animation-preview work will wire them up to the preview
+/// `AnimationPlayer`.
+fn play_pause_controls() -> impl Bundle {
+    (
+        EditorEntity,
+        Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            height: px(22.0),
+            padding: UiRect::horizontal(px(6.5)),
+            column_gap: px(9.0),
+            border: UiRect::all(px(1.0)),
+            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::HEADER_CONTROL_BG),
+        BorderColor::all(tokens::HEADER_CONTROL_BORDER),
+        children![
+            (
+                Text::new(String::from(Icon::Play.unicode())),
+                TextFont {
+                    font_size: 13.0,
+                    ..Default::default()
+                },
+                TextColor(tokens::HEADER_CONTROL_LABEL),
+            ),
+            (
+                Text::new(String::from(Icon::Pause.unicode())),
+                TextFont {
+                    font_size: 13.0,
+                    ..Default::default()
+                },
+                TextColor(tokens::HEADER_CONTROL_LABEL),
+            ),
+        ],
     )
 }
 
@@ -402,6 +558,11 @@ fn project_files_panel() -> impl Bundle {
     )
 }
 
+/// Build the center column: a vertical split with the 3D viewport on
+/// top and the tabbable bottom-panels area (Assets / Timeline / ...)
+/// underneath. No more preset swapping — the timeline is just a tab
+/// in the bottom panel, available whenever the user wants to
+/// animate, without having to "enter Animation View" as a mode.
 fn center_column(icon_font: Handle<Font>) -> impl Bundle {
     (
         EditorEntity,
@@ -411,7 +572,6 @@ fn center_column(icon_font: Handle<Font>) -> impl Bundle {
             flex_direction: FlexDirection::Column,
             ..Default::default()
         },
-        // Vertical split: viewport (top) | bottom panels (bottom)
         split_panel::panel_group(
             0.15,
             (
@@ -1311,30 +1471,16 @@ pub(crate) fn update_edit_tool_highlights(
     }
 }
 
-/// Toggle workspace container visibility when ActiveWorkspace changes.
-pub fn update_workspace_visibility(
-    workspace: Res<ActiveWorkspace>,
-    mut scene_editors: Query<
-        &mut Node,
-        (With<SceneEditorWorkspace>, Without<RemoteDebugWorkspace>),
-    >,
-    mut remote_debugs: Query<
-        &mut Node,
-        (With<RemoteDebugWorkspace>, Without<SceneEditorWorkspace>),
-    >,
+/// Toggle document-root visibility when the active tab changes.
+pub fn update_active_document_display(
+    active: Res<ActiveDocument>,
+    mut roots: Query<(&DocumentRoot, &mut Node)>,
 ) {
-    if !workspace.is_changed() {
+    if !active.is_changed() {
         return;
     }
-    for mut node in &mut scene_editors {
-        node.display = if *workspace == ActiveWorkspace::SceneEditor {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-    for mut node in &mut remote_debugs {
-        node.display = if *workspace == ActiveWorkspace::RemoteDebug {
+    for (root, mut node) in &mut roots {
+        node.display = if root.0 == active.kind {
             Display::Flex
         } else {
             Display::None
@@ -1342,58 +1488,308 @@ pub fn update_workspace_visibility(
     }
 }
 
-/// Update scene tab styling and dim remote tab when disconnected.
-pub fn update_tab_highlights(
-    workspace: Res<ActiveWorkspace>,
-    manager: Res<ConnectionManager>,
-    mut tabs: Query<(&WorkspaceTab, &mut BackgroundColor, &Children)>,
-    mut texts: Query<&mut TextColor>,
-    mut bgs: Query<&mut BackgroundColor, Without<WorkspaceTab>>,
+/// Click observer on dock sidebar icons — sets
+/// [`ActiveDockWindow`] to whatever kind the clicked icon
+/// represents. Runs as a global observer via `add_observer`; the
+/// `Interaction` component on each icon generates the
+/// `Pointer<Click>` events.
+pub fn on_dock_sidebar_icon_click(
+    trigger: On<Pointer<Click>>,
+    icons: Query<&DockSidebarIcon>,
+    mut active: ResMut<ActiveDockWindow>,
 ) {
-    if !workspace.is_changed() && !manager.is_changed() {
+    let Ok(icon) = icons.get(trigger.event_target()) else {
+        return;
+    };
+    if active.0 != icon.0 {
+        active.0 = icon.0;
+    }
+}
+
+/// Toggle `Display` on every [`DockBody`] so only the one matching
+/// [`ActiveDockWindow`] is visible. Runs every frame, cheap, and the
+/// branch early-exits when the resource hasn't changed.
+pub fn update_dock_body_visibility(
+    active: Res<ActiveDockWindow>,
+    mut bodies: Query<(&DockBody, &mut Node)>,
+) {
+    if !active.is_changed() {
         return;
     }
-    let connected = manager.is_connected();
-    for (tab, mut tab_bg, children) in &mut tabs {
-        let is_active = tab.0 == *workspace;
-        let is_disabled = tab.0 == ActiveWorkspace::RemoteDebug && !connected;
-
-        // Tab background
-        tab_bg.0 = if is_active {
-            Color::srgba(1.0, 1.0, 1.0, 0.08)
+    for (body, mut node) in &mut bodies {
+        node.display = if body.0 == active.0 {
+            Display::Flex
         } else {
-            Color::NONE
+            Display::None
         };
+    }
+}
 
-        let text_color = if is_disabled {
-            Color::srgba(0.4, 0.4, 0.4, 0.5)
-        } else if is_active {
-            tokens::TEXT_PRIMARY
-        } else {
-            tokens::TEXT_SECONDARY
-        };
-
-        // Update text + accent bar colors on children
-        let accent_color = if is_active {
+/// Restyle dock sidebar icons so the active one gets an accent blue
+/// left border and primary text color, matching the legacy look of
+/// the asset-browser sidebar.
+pub fn update_dock_sidebar_highlights(
+    active: Res<ActiveDockWindow>,
+    mut icons: Query<(&DockSidebarIcon, &mut BorderColor, &Children)>,
+    mut text_colors: Query<&mut TextColor>,
+) {
+    if !active.is_changed() {
+        return;
+    }
+    for (icon, mut border, children) in &mut icons {
+        let is_active = icon.0 == active.0;
+        *border = BorderColor::all(if is_active {
             tokens::ACCENT_BLUE
         } else {
             Color::NONE
-        };
-
+        });
         for child in children.iter() {
-            if let Ok(mut tc) = texts.get_mut(child) {
-                tc.0 = text_color;
-            }
-            // Update accent bar bg (first child is the 2.5px bar)
-            if let Ok(mut child_bg) = bgs.get_mut(child) {
-                child_bg.0 = accent_color;
+            if let Ok(mut tc) = text_colors.get_mut(child) {
+                tc.0 = if is_active {
+                    tokens::TEXT_PRIMARY
+                } else {
+                    tokens::TAB_INACTIVE_TEXT
+                };
             }
         }
     }
 }
 
+/// Refresh tab-strip styling — active tab gets its bg + border, inactive
+/// tabs go transparent; Schedule Explorer dims when Remote is
+/// disconnected.
+pub fn update_tab_strip_highlights(
+    active: Res<ActiveDocument>,
+    manager: Res<ConnectionManager>,
+    mut tabs: Query<(
+        &DocumentTabButton,
+        &mut BackgroundColor,
+        &mut BorderColor,
+        &Children,
+    )>,
+    mut texts: Query<&mut TextColor>,
+) {
+    if !active.is_changed() && !manager.is_changed() {
+        return;
+    }
+    let connected = manager.is_connected();
+    for (tab, mut tab_bg, mut tab_border, children) in &mut tabs {
+        let is_active = tab.0 == active.kind;
+        let is_disabled = tab.0 == TabKind::ScheduleExplorer && !connected;
+
+        tab_bg.0 = if is_active {
+            tokens::DOC_TAB_ACTIVE_BG
+        } else {
+            Color::NONE
+        };
+        *tab_border = BorderColor::all(if is_active {
+            tokens::DOC_TAB_ACTIVE_BORDER
+        } else {
+            Color::NONE
+        });
+
+        let label_color = if is_disabled {
+            Color::srgba(0.4, 0.4, 0.4, 0.5)
+        } else if is_active {
+            tokens::DOC_TAB_ACTIVE_LABEL
+        } else {
+            tokens::DOC_TAB_INACTIVE_LABEL
+        };
+
+        // First child is the accent strip (skip it — its color is
+        // type-fixed). Second and third children are the icon and
+        // label text — refresh their colors.
+        for child in children.iter().skip(1) {
+            if let Ok(mut tc) = texts.get_mut(child) {
+                tc.0 = label_color;
+            }
+        }
+    }
+}
+
+/// The bottom panel area below the viewport. Split into a 30px
+/// left window-selector sidebar + a body area that hosts whichever
+/// window is currently active (Assets, Timeline, ...).
+///
+/// This is the embryo of a docking system: in the near-term the
+/// sidebar icons swap the single body between a few tool windows.
+/// Later, top-of-panel tabs will let you open multiple instances of
+/// the same window kind (two asset browsers at different paths,
+/// multiple timelines for different clips, etc.).
 fn bottom_panels(icon_font: Handle<Font>) -> impl Bundle {
-    asset_browser::asset_browser_panel(icon_font)
+    (
+        EditorEntity,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            flex_direction: FlexDirection::Row,
+            overflow: Overflow::clip(),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::PANEL_BG),
+        children![
+            dock_window_sidebar(icon_font.clone()),
+            dock_body_area(icon_font),
+        ],
+    )
+}
+
+/// 30px vertical sidebar with one clickable icon per dock window
+/// kind. Matches the legacy sidebar that used to live inside the
+/// asset browser — same visual styling (borders, colors, active-state
+/// blue left accent) but now acts as a real window picker.
+fn dock_window_sidebar(icon_font: Handle<Font>) -> impl Bundle {
+    (
+        EditorEntity,
+        Node {
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            width: Val::Px(30.0),
+            padding: UiRect::new(Val::Px(1.0), Val::ZERO, Val::Px(4.0), Val::Px(9.0)),
+            flex_shrink: 0.0,
+            border: UiRect {
+                left: Val::Px(1.0),
+                top: Val::Px(1.0),
+                bottom: Val::Px(1.0),
+                right: Val::ZERO,
+            },
+            border_radius: BorderRadius::left(Val::Px(5.0)),
+            ..Default::default()
+        },
+        BackgroundColor(tokens::WINDOW_BG),
+        BorderColor::all(tokens::PANEL_BORDER),
+        children![
+            // Top group: the window pickers themselves.
+            (
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    ..Default::default()
+                },
+                children![
+                    dock_sidebar_icon(DockWindowKind::Terminal, Icon::Terminal, icon_font.clone()),
+                    dock_sidebar_icon(DockWindowKind::Assets, Icon::FolderOpen, icon_font.clone()),
+                    dock_sidebar_icon(DockWindowKind::Timeline, Icon::Ruler, icon_font.clone()),
+                ],
+            ),
+            // Bottom grip handle (decorative, will become a drag
+            // affordance when the docking system lands).
+            (
+                Node {
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..Default::default()
+                },
+                children![(
+                    Text::new(String::from(Icon::GripVertical.unicode())),
+                    TextFont {
+                        font: icon_font,
+                        font_size: 15.0,
+                        ..Default::default()
+                    },
+                    TextColor(tokens::TAB_INACTIVE_TEXT),
+                )],
+            ),
+        ],
+    )
+}
+
+/// A single clickable icon button in the dock sidebar. The button
+/// carries a `DockSidebarIcon` marker that identifies which window
+/// kind it selects; clicking it sets [`ActiveDockWindow`], which is
+/// consumed by [`update_dock_body_visibility`] and
+/// [`update_dock_sidebar_highlights`] to swap the body and restyle
+/// the sidebar respectively.
+fn dock_sidebar_icon(kind: DockWindowKind, icon: Icon, icon_font: Handle<Font>) -> impl Bundle {
+    (
+        DockSidebarIcon(kind),
+        Interaction::default(),
+        Node {
+            width: Val::Px(29.0),
+            height: Val::Px(30.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::left(Val::Px(2.0)),
+            ..Default::default()
+        },
+        BorderColor::all(Color::NONE),
+        children![(
+            Text::new(String::from(icon.unicode())),
+            TextFont {
+                font: icon_font,
+                font_size: tokens::ICON_MD,
+                ..Default::default()
+            },
+            TextColor(tokens::TAB_INACTIVE_TEXT),
+        )],
+    )
+}
+
+/// Container for the dock body — one sibling per window kind, with
+/// `update_dock_body_visibility` toggling `Display` so only the
+/// active one is visible. All bodies are spawned up-front so their
+/// internal state (asset browser path, timeline cursor, etc.)
+/// persists across switches.
+fn dock_body_area(icon_font: Handle<Font>) -> impl Bundle {
+    (
+        EditorEntity,
+        Node {
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            min_width: Val::Px(0.0),
+            min_height: Val::Px(0.0),
+            ..Default::default()
+        },
+        children![
+            // Assets body — active by default.
+            (
+                DockBody(DockWindowKind::Assets),
+                Node {
+                    flex_grow: 1.0,
+                    width: percent(100),
+                    min_height: Val::Px(0.0),
+                    display: Display::Flex,
+                    ..Default::default()
+                },
+                children![asset_browser::asset_browser_panel(icon_font.clone())],
+            ),
+            // Timeline body.
+            (
+                DockBody(DockWindowKind::Timeline),
+                Node {
+                    flex_grow: 1.0,
+                    width: percent(100),
+                    min_height: Val::Px(0.0),
+                    display: Display::None,
+                    ..Default::default()
+                },
+                children![jackdaw_animation::timeline_panel()],
+            ),
+            // Terminal body — placeholder for now. Kept as a dead
+            // container so the sidebar icon has something to switch
+            // to without crashing.
+            (
+                DockBody(DockWindowKind::Terminal),
+                Node {
+                    flex_grow: 1.0,
+                    width: percent(100),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..Default::default()
+                },
+                children![(
+                    Text::new("Terminal window — not implemented yet"),
+                    TextFont {
+                        font_size: tokens::FONT_MD,
+                        ..Default::default()
+                    },
+                    TextColor(tokens::TEXT_MUTED_COLOR.into()),
+                )],
+            ),
+        ],
+    )
 }
 
 /// Custom status bar that wraps the feathers status bar sections and adds

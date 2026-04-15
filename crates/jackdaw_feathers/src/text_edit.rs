@@ -132,6 +132,7 @@ pub struct TextEditConfig {
     auto_focus: bool,
     allow_empty: bool,
     drag_bottom: bool,
+    disabled: bool,
     pub initialized: bool,
 }
 
@@ -145,6 +146,7 @@ pub struct TextEditProps {
     pub suffix: Option<String>,
     pub min: f64,
     pub max: f64,
+    pub disabled: bool,
     pub auto_focus: bool,
     pub allow_empty: bool,
     pub drag_bottom: bool,
@@ -163,6 +165,7 @@ impl Default for TextEditProps {
             suffix: None,
             min: f64::MIN,
             max: f64::MAX,
+            disabled: false,
             auto_focus: false,
             allow_empty: false,
             drag_bottom: false,
@@ -216,6 +219,13 @@ impl TextEditProps {
         self.auto_focus = true;
         self
     }
+    pub fn disabled(self) -> Self {
+        self.with_disabled(true)
+    }
+    pub fn with_disabled(mut self, value: bool) -> Self {
+        self.disabled = value;
+        self
+    }
     pub fn numeric_f32(mut self) -> Self {
         self.variant = TextEditVariant::NumericF32;
         self.filter = Some(FilterType::Decimal);
@@ -256,6 +266,7 @@ pub fn text_edit(props: TextEditProps) -> impl Bundle {
         auto_focus,
         allow_empty,
         drag_bottom,
+        disabled,
         grow: _,
     } = props;
 
@@ -281,6 +292,7 @@ pub fn text_edit(props: TextEditProps) -> impl Bundle {
             auto_focus,
             allow_empty,
             drag_bottom,
+            disabled,
             initialized: false,
         },
         TextEditValue::default(),
@@ -392,7 +404,7 @@ fn setup_text_edit_input(
 
         commands.entity(entity).add_child(wrapper_entity);
 
-        if is_numeric && !config.drag_bottom {
+        if is_numeric && !config.drag_bottom && !config.disabled {
             // When there's a prefix (XYZ label), the drag hitbox covers ONLY the
             // label area so clicking the value area still lets you type.
             // Without a prefix, the hitbox covers the left portion of the input.
@@ -485,6 +497,7 @@ fn setup_text_edit_input(
                 mode: TextInputMode::SingleLine,
                 clear_on_submit: false,
                 unfocus_on_submit: true,
+                is_enabled: !config.disabled,
                 ..default()
             },
             TextFont {

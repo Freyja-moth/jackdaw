@@ -10,8 +10,8 @@ pub use bevy_ui_text_input::{TextInputBuffer, TextInputQueue};
 use crate::cursor::{ActiveCursor, HoverCursor};
 use crate::icons::EditorFont;
 use crate::tokens::{
-    AXIS_LABEL_BG, BORDER_COLOR, ELEVATED_BG, PRIMARY_COLOR, SHADOW_COLOR_LIGHT, TEXT_BODY_COLOR,
-    TEXT_MUTED_COLOR, TEXT_SIZE, TEXT_SIZE_SM,
+    self, AXIS_LABEL_BG, BORDER_COLOR, ELEVATED_BG, PRIMARY_COLOR, SHADOW_COLOR_LIGHT,
+    TEXT_BODY_COLOR, TEXT_MUTED_COLOR, TEXT_SIZE, TEXT_SIZE_SM,
 };
 
 pub fn plugin(app: &mut App) {
@@ -330,20 +330,25 @@ fn setup_text_edit_input(
                 Node {
                     width: percent(100),
                     height: px(INPUT_HEIGHT),
-                    // If prefix, no left padding so the label sits flush at the edge
+                    // If prefix, only a small bit of left padding so the label sits close to the edge
                     padding: if has_prefix {
-                        UiRect::new(px(0), px(8), px(0), px(0))
+                        UiRect::new(
+                            px(tokens::SPACING_XS),
+                            px(tokens::SPACING_MD),
+                            px(tokens::SPACING_SM),
+                            px(tokens::SPACING_SM),
+                        )
                     } else {
-                        UiRect::axes(px(8), px(4))
+                        UiRect::axes(px(tokens::SPACING_MD), px(tokens::SPACING_SM))
                     },
-                    border_radius: BorderRadius::all(px(4)),
+                    border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
                     // Stretch so prefix fills full height
                     align_items: if has_prefix {
                         AlignItems::Stretch
                     } else {
                         AlignItems::Center
                     },
-                    column_gap: px(6),
+                    column_gap: px(tokens::SPACING_MD),
                     ..default()
                 },
                 BackgroundColor(ELEVATED_BG),

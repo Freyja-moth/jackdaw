@@ -187,7 +187,7 @@ impl DockTree {
     }
 
     /// Create a new leaf and bind it to the named anchor. If the anchor
-    /// already exists, its previous root is replaced (but not despawned —
+    /// already exists, its previous root is replaced (but not despawned;
     /// the caller should clean up if needed).
     pub fn set_anchor_leaf(&mut self, anchor: impl Into<String>, leaf: DockLeaf) -> NodeId {
         let id = self.insert(DockNode::Leaf(leaf));
@@ -279,8 +279,6 @@ impl DockTree {
         }
     }
 
-    // ── Mutations ───────────────────────────────────────────────────
-
     /// Split `target` along `edge` and place `window` into the newly-
     /// created sibling leaf. Returns the id of the new leaf.
     ///
@@ -300,9 +298,9 @@ impl DockTree {
             .map(|l| l.style.clone())
             .unwrap_or_default();
 
-        // New leaf holding the dropped window. Reserve a NodeId first so
-        // we can use it to make the synthetic area_id unique — multiple
-        // splits of the same window would otherwise collide.
+        // New leaf holding the dropped window. Reserve a NodeId first
+        // so we can use it to make the synthetic area_id unique;
+        // otherwise multiple splits of the same window would collide.
         let new_leaf_id = self.fresh_id();
         self.nodes.insert(
             new_leaf_id,
@@ -399,7 +397,7 @@ impl DockTree {
             l.windows.push(window.to_string());
             l.active = Some(window.to_string());
         }
-        // Source may be empty now — let simplify collapse it.
+        // Source may be empty now; simplify will collapse it.
         self.simplify();
     }
 
@@ -423,9 +421,9 @@ impl DockTree {
     ///   The surviving sibling of a removed leaf takes its place in the parent.
     /// - Splits whose children collapsed away are themselves removed.
     ///
-    /// Never removes a leaf referenced by `root` or `anchors` even if empty —
-    /// an empty root/anchor keeps the slot valid (e.g. after closing the last
-    /// window in a built-in panel).
+    /// Never removes a leaf referenced by `root` or `anchors` even if
+    /// empty. An empty root/anchor keeps the slot valid (e.g. after
+    /// closing the last window in a built-in panel).
     pub fn simplify(&mut self) {
         loop {
             let single_root = self.root;
@@ -446,7 +444,7 @@ impl DockTree {
                 return;
             };
             let Some(parent_id) = self.parent_of(empty_id) else {
-                // No parent — the leaf is a stray root we can't simplify.
+                // No parent. The leaf is a stray root we can't simplify.
                 self.nodes.remove(&empty_id);
                 continue;
             };
@@ -494,8 +492,6 @@ impl DockTree {
 fn fresh_area_id(window_id: &str, leaf_id: NodeId) -> String {
     format!("split.{window_id}.{}", leaf_id.0)
 }
-
-// ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -585,7 +581,7 @@ mod tests {
         let mut t = DockTree::new();
         let root = t.set_root_leaf(leaf("root", &["a"]));
         let right = t.split(root, Edge::Right, "b".into()).unwrap();
-        // Move "a" to the right leaf — left leaf is now empty, should collapse.
+        // Move "a" to the right leaf. Left leaf is now empty and should collapse.
         t.move_window("a", right);
 
         // The tree should now be a single leaf (right) at the root.
@@ -653,7 +649,7 @@ mod tests {
         let leaf_id = t.set_anchor_leaf("left_top", leaf("left_top", &["scene_tree"]));
         assert_eq!(t.anchor("left_top"), Some(leaf_id));
 
-        // Split the anchor's leaf — the anchor must follow.
+        // Split the anchor's leaf. The anchor must follow.
         let _new = t.split(leaf_id, Edge::Bottom, "import".into()).unwrap();
         let new_anchor_root = t.anchor("left_top").unwrap();
         assert_ne!(new_anchor_root, leaf_id);

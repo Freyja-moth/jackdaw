@@ -9,7 +9,7 @@ use jackdaw_feathers::{
 
 use crate::{
     EditorEntity,
-    asset_browser::{self, ActiveTooltip},
+    asset_browser::ActiveTooltip,
     brush::{BrushEditMode, BrushSelection, EditMode},
     draw_brush::DrawBrushState,
     gizmos::{GizmoMode, GizmoSpace},
@@ -22,7 +22,6 @@ use crate::{
 };
 
 /// Discriminator for the header tab kinds the editor knows how to host.
-/// New kinds will be added for animation-graph assets, shader assets, etc.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum TabKind {
     /// The live scene being edited. There's exactly one Scene tab.
@@ -60,11 +59,7 @@ impl TabKind {
     }
 }
 
-/// Layout preset for the Scene document tab. Kept as a
-/// single-variant enum for now so future layout presets (e.g. a
-/// distraction-free shader authoring view) can slot in without
-/// reintroducing the plumbing. The old `Animation` variant was
-/// removed when the timeline became a bottom-panel tab.
+/// Layout preset for the Scene document tab.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SceneViewPreset {
     #[default]
@@ -226,7 +221,7 @@ pub fn editor_layout(icon_font: &IconFont) -> impl Bundle {
                         )],
                     ),
                     // Schedule Explorer document (hidden by default).
-                    // Formerly the Remote Debug workspace — same content,
+                    // Formerly the Remote Debug workspace; same content
                     // repackaged as a document tab.
                     (
                         DocumentRoot(TabKind::ScheduleExplorer),
@@ -312,7 +307,7 @@ fn window_header() -> impl Bundle {
                     ),
                 ],
             ),
-            // Flexible spacer — absorbs leftover horizontal space
+            // Flexible spacer; absorbs leftover horizontal space
             // between the left group and the right group.
             (
                 EditorEntity,
@@ -337,10 +332,8 @@ fn window_header() -> impl Bundle {
     )
 }
 
-/// Play/Pause transport pill. Visual placeholder — the editor doesn't
-/// have a play mode yet, so these buttons are no-ops. Phase 5's
-/// animation-preview work will wire them up to the preview
-/// `AnimationPlayer`.
+/// Play/Pause transport pill. Visual placeholder: the editor has no
+/// play mode yet, so these buttons are no-ops.
 fn play_pause_controls() -> impl Bundle {
     (
         EditorEntity,
@@ -451,9 +444,8 @@ pub fn project_files_panel_content() -> impl Bundle {
 
 /// Build the center column: a vertical split with the 3D viewport on
 /// top and the tabbable bottom-panels area (Assets / Timeline / ...)
-/// underneath. No more preset swapping — the timeline is just a tab
-/// in the bottom panel, available whenever the user wants to
-/// animate, without having to "enter Animation View" as a mode.
+/// underneath. The timeline is a regular tab in the bottom panel, so
+/// animating no longer requires switching into an "Animation View".
 fn center_column(icon_font: Handle<Font>) -> impl Bundle {
     (
         EditorEntity,
@@ -1332,8 +1324,8 @@ pub fn update_active_document_display(
     }
 }
 
-/// Refresh tab-strip styling — active tab gets its bg + border, inactive
-/// tabs go transparent; Schedule Explorer dims when Remote is
+/// Refresh tab-strip styling. Active tab gets its bg + border; inactive
+/// tabs go transparent. Schedule Explorer dims when Remote is
 /// disconnected.
 pub fn update_tab_strip_highlights(
     active: Res<ActiveDocument>,
@@ -1373,9 +1365,9 @@ pub fn update_tab_strip_highlights(
             tokens::DOC_TAB_INACTIVE_LABEL
         };
 
-        // First child is the accent strip (skip it — its color is
+        // First child is the accent strip; skip it (its color is
         // type-fixed). Second and third children are the icon and
-        // label text — refresh their colors.
+        // label text; refresh their colors.
         for child in children.iter().skip(1) {
             if let Ok(mut tc) = texts.get_mut(child) {
                 tc.0 = label_color;

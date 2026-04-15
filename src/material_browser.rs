@@ -863,8 +863,6 @@ fn update_preview_area(
 
     let has_depth = mat.depth_map.is_some();
 
-    // --- Texture slots section ---
-    // Section header
     commands.spawn((
         Text::new("Textures"),
         TextFont {
@@ -1020,7 +1018,6 @@ fn update_preview_area(
         }
     }
 
-    // --- Parameters section ---
     commands.spawn((
         Text::new("Parameters"),
         TextFont {

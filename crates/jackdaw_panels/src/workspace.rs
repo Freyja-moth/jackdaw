@@ -9,10 +9,10 @@ pub struct WorkspaceDescriptor {
     pub name: String,
     pub icon: Option<String>,
     pub accent_color: Color,
-    /// Legacy field — no longer applied. Kept for callers that still
-    /// construct it; the live layout lives in `tree`.
+    /// Legacy field. No longer applied; kept so older callers still
+    /// compile. The live layout lives in `tree`.
     pub layout: LayoutState,
-    /// Per-workspace dock tree. Empty default → seeded on first
+    /// Per-workspace dock tree. An empty default is seeded on first
     /// activation by the editor's normal init flow.
     pub tree: DockTree,
 }

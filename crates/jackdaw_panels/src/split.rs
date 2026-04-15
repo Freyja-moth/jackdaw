@@ -114,8 +114,8 @@ fn recalculate_group(
     let flex_direction = group_node.flex_direction;
     let child_entities: Vec<Entity> = children.iter().collect();
 
-    // Sum only visible panels — hidden ones (Display::None) are out of
-    // layout, so giving them a percentage steals space from siblings.
+    // Sum only visible panels. Hidden (Display::None) panels are out
+    // of layout, so giving them a percentage steals space from siblings.
     let panels_ro = queries.p1();
     let total: f32 = panels_ro
         .iter_many(&child_entities)

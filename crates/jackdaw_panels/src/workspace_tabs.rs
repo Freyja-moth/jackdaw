@@ -77,7 +77,7 @@ pub fn populate_workspace_tabs(world: &mut World) {
             let is_empty = world
                 .entity(entity)
                 .get::<Children>()
-                .map_or(true, |c| c.is_empty());
+                .is_none_or(|c| c.is_empty());
             if is_empty || ids_changed {
                 strips.push(entity);
             }

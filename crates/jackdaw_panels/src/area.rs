@@ -9,7 +9,7 @@ pub enum DockAreaStyle {
     #[default]
     TabBar,
     IconSidebar,
-    /// No tab bar — the panel content provides its own header.
+    /// No tab bar; the panel content provides its own header.
     /// Used for single-window areas or panels with internal tabs.
     Headless,
 }

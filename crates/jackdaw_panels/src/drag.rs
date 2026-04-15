@@ -62,7 +62,7 @@ pub struct DragGhost;
 pub struct DropOverlay;
 
 /// Marks the editor viewport entity as a drop target. The viewport is
-/// not an `AnchorHost` — dropping on its edge re-populates one of the
+/// not an `AnchorHost`; dropping on its edge re-populates one of the
 /// side anchors (`left`, `right_sidebar`, `bottom_dock`) instead.
 #[derive(Component)]
 pub struct ViewportDropTarget;
@@ -367,8 +367,8 @@ fn on_drag_move(
                     let frac_x = rel.x / size.x;
                     let frac_y = rel.y / size.y;
 
-                    // No top anchor above the viewport — skip Top. The
-                    // center region (25–75% on both axes) is a no-op.
+                    // No top anchor above the viewport, so skip Top.
+                    // The center region (25..75% on both axes) is a no-op.
                     let edge = if frac_y > 0.75 {
                         Some(DropEdge::Bottom)
                     } else if frac_x < 0.25 {

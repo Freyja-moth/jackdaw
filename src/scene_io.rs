@@ -36,7 +36,7 @@ const SKIP_COMPONENT_PREFIXES: &[&str] = &[
     // AnimationPlayer / AnimationGraphHandle / AnimationTargetId / AnimatedBy
     // are installed on targets at runtime by the animation plugin.
     // They're derived from the authored clip components and must not be
-    // serialized — otherwise load would restore stale player state and
+    // serialized; otherwise load would restore stale player state and
     // dangling asset handles.
     "bevy_animation::",
 ];
@@ -211,7 +211,6 @@ fn save_scene_inner(world: &mut World) {
         .map(|c| c.id_to_name.clone())
         .unwrap_or_default();
 
-    // --- Phase 1: Collect inline assets from all scene entity components ---
     let (inline_assets, inline_asset_data) = collect_inline_assets(
         world,
         &registry_guard,
@@ -220,7 +219,6 @@ fn save_scene_inner(world: &mut World) {
         &catalog_id_to_name,
     );
 
-    // --- Phase 2: Build entity list and serialize ---
     let entities = build_scene_snapshot(
         world,
         &registry_guard,
@@ -229,7 +227,6 @@ fn save_scene_inner(world: &mut World) {
         &scene_entities,
     );
 
-    // --- Phase 3: Serialize inline asset data into JsnAssets ---
     let assets = JsnAssets(inline_asset_data);
 
     drop(registry_guard);
@@ -356,8 +353,6 @@ pub fn load_scene(world: &mut World) {
     spawn_open_dialog(world);
 }
 
-// ─────────────────────────────────── Serializer Processor ───────────────────────────────────
-
 struct JsnSerializerProcessor<'a> {
     parent_path: Cow<'a, Path>,
     /// Maps runtime asset IDs (no path) to inline `#Name` references.
@@ -451,8 +446,6 @@ impl<'a> ReflectSerializerProcessor for JsnSerializerProcessor<'a> {
         Ok(Err(serializer))
     }
 }
-
-// ─────────────────────────────────── Deserializer Processor ───────────────────────────────────
 
 pub(crate) struct JsnDeserializerProcessor<'a> {
     pub(crate) asset_server: &'a AssetServer,
@@ -592,8 +585,6 @@ impl<'a> Visitor<'_> for &'a JsnDeserializerProcessor<'a> {
     }
 }
 
-// ─────────────────────────────── Float Visitors (inf/NaN round-trip) ────────────────────────────
-
 struct F32Visitor;
 
 impl Visitor<'_> for F32Visitor {
@@ -673,8 +664,6 @@ impl<'a> JsnDeserializerProcessor<'a> {
         asset_path
     }
 }
-
-// ─────────────────────────────────── Inline Asset Collection ───────────────────────────────────
 
 /// Walk all scene entity components, find `Handle<T>` fields that have no asset path
 /// (runtime-created), serialize them into the generic assets table, and return a map
@@ -1087,8 +1076,6 @@ pub fn serialize_asset_into(
     }
 }
 
-// ─────────────────────────────────── Save (Snapshot) ───────────────────────────────────
-
 /// Build a `Vec<JsnEntity>` from scene entities using reflection.
 /// Uses the serializer processor to handle `Handle<T>` and `Entity` fields.
 fn build_scene_snapshot(
@@ -1182,8 +1169,6 @@ fn build_scene_snapshot(
         })
         .collect()
 }
-
-// ─────────────────────────────────── Load ───────────────────────────────────
 
 fn finish_load_scene(world: &mut World, chosen: &std::path::Path) {
     let path = chosen.to_string_lossy().to_string();
@@ -1594,8 +1579,6 @@ fn cleanup_pending_new_scene(
     }
 }
 
-// ─────────────────────────────────── Helpers ───────────────────────────────────
-
 /// Collect scene entities (named non-editor entities and all their descendants).
 /// Requires `&mut World` for `query_filtered`.
 fn collect_scene_entities_from_set(world: &mut World, editor_set: &HashSet<Entity>) -> Vec<Entity> {
@@ -1796,12 +1779,11 @@ fn handle_scene_io_keys(world: &mut World) {
     }
 }
 
-// ─────────────────────────────────── AST Registration ───────────────────────────────────
-
 /// Register a single ECS entity in the SceneJsnAst by serializing all its
 /// scene-relevant components into JSON. Skips entities already in the AST.
-/// Serializer processor for AST registration  -- resolves `Handle<T>` to path strings
-/// and `Entity` to null (no scene-local index available at registration time).
+/// Serializer processor for AST registration: resolves `Handle<T>` to path
+/// strings and `Entity` to null (no scene-local index available at
+/// registration time).
 /// Matches BSN's `BsnValue::from_reflect_with_assets` pattern.
 pub struct AstSerializerProcessor;
 

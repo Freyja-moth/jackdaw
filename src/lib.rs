@@ -445,7 +445,7 @@ fn on_clip_name_commit(
 /// One-shot decorator: when timeline header buttons appear, stamp
 /// them with `ToolbarTooltip` so the existing tooltip system picks
 /// them up on hover. Runs every frame but short-circuits via
-/// `Added<T>` filters — only fires once per button spawn.
+/// `Added<T>` filters, so it only fires once per button spawn.
 #[allow(clippy::type_complexity)]
 fn decorate_timeline_tooltips(
     play: Query<Entity, Added<jackdaw_animation::TimelinePlayButton>>,
@@ -504,15 +504,15 @@ fn on_create_blend_graph_for_selection(
     };
     let Ok(name) = names.get(primary) else {
         warn!(
-            "Create Blend Graph: selected entity has no Name — give it one in the inspector first"
+            "Create Blend Graph: selected entity has no Name. Give it one in the inspector first"
         );
         return;
     };
     let target_name = name.as_str().to_string();
 
     commands.queue(move |world: &mut World| {
-        // The blend graph clip is BOTH a `Clip` and a `NodeGraph` —
-        // the canvas widget consumes the NodeGraph side of that
+        // The blend graph clip is BOTH a `Clip` and a `NodeGraph`.
+        // The canvas widget consumes the NodeGraph side of that
         // entity, and the timeline dock consumes the Clip side. That
         // means children are GraphNodes + Connections rather than
         // AnimationTracks, but `compile_clips` already skips entities
@@ -558,7 +558,7 @@ fn on_create_blend_graph_for_selection(
 /// Observer: when the placeholder "Create Clip for Selection" button
 /// is clicked, spawn a new `Clip` + `Name` + default `AnimationTrack` for
 /// the primary selected entity, directly via `SpawnEntity`. The
-/// animation crate deliberately exports no custom commands — this is
+/// animation crate deliberately exports no custom commands; this is
 /// the minimum-wrapping form of "create a clip."
 fn on_create_clip_for_selection(
     event: On<jackdaw_feathers::button::ButtonClickEvent>,
@@ -575,7 +575,7 @@ fn on_create_clip_for_selection(
         return;
     };
     let Ok(name) = names.get(primary) else {
-        warn!("Create Clip: selected entity has no Name — give it one in the inspector first");
+        warn!("Create Clip: selected entity has no Name. Give it one in the inspector first");
         return;
     };
     let target_name = name.as_str().to_string();
@@ -583,7 +583,7 @@ fn on_create_clip_for_selection(
     commands.queue(move |world: &mut World| {
         // Spawn clip entity *as a child of the target*. The clip's
         // position in the hierarchy is what encodes "this animates
-        // that" — compile/bind/snapshot all walk up from the clip to
+        // that": compile/bind/snapshot all walk up from the clip to
         // the parent to find the target. Deletion cascades naturally
         // and renaming the target can't silently break the clip
         // because the target is a live Entity reference, not a
@@ -622,9 +622,9 @@ fn on_create_clip_for_selection(
 ///
 /// Two cases are actively updated:
 /// - **A.** Primary selection is already an animation entity (clip,
-///   track, or keyframe) — walk up `ChildOf` until we hit the owning
+///   track, or keyframe): walk up `ChildOf` until we hit the owning
 ///   `Clip` marker and select that.
-/// - **B.** Primary selection is a regular scene entity — find the
+/// - **B.** Primary selection is a regular scene entity: find the
 ///   first `Clip` among its `Children` and select it. Since clips
 ///   now live parented to their target, this is a structural lookup
 ///   rather than a name-based scan.
@@ -632,9 +632,9 @@ fn on_create_clip_for_selection(
 /// **Empty selection is deliberately a no-op.** After deleting a
 /// keyframe the main `delete_selected` path clears `Selection`; if
 /// we also cleared `SelectedClip` here the timeline would bounce to
-/// its placeholder after every keyframe delete. The stale case —
-/// deleting a brush cascades through `ChildOf` and takes its clip
-/// with it — is already handled by `rebuild_timeline`, which falls
+/// its placeholder after every keyframe delete. The stale case
+/// (deleting a brush cascades through `ChildOf` and takes its clip
+/// with it) is already handled by `rebuild_timeline`, which falls
 /// through to the placeholder when `clips.get(selected.0)` fails.
 ///
 /// Lives here rather than in `jackdaw_animation` because the animation
@@ -687,7 +687,7 @@ fn follow_scene_selection_to_clip(
     // Case C: the selected entity is not an animation entity and has
     // no clip children. Clear the active clip so the timeline shows
     // the placeholder with "Create Clip" / "Create Blend Graph".
-    // This is distinct from the empty-selection guard at the top —
+    // This is distinct from the empty-selection guard at the top:
     // empty selection preserves the clip (so keyframe deletes don't
     // bounce the timeline), but selecting a clipless entity is an
     // explicit context switch.
@@ -704,8 +704,8 @@ fn follow_scene_selection_to_clip(
 /// end up clobbering whatever is living at that slot now (the user
 /// saw this as "Ctrl+Z deletes my brush").
 ///
-/// This command captures the keyframe's fields directly — `time`,
-/// `value`, and parent `track` — and on undo spawns a **fresh**
+/// This command captures the keyframe's fields directly (`time`,
+/// `value`, and parent `track`) and on undo spawns a **fresh**
 /// entity with those fields parented to the original track. No
 /// ID reuse, no `DynamicScene`, no surprises.
 enum DespawnKeyframeCmd {
@@ -836,7 +836,7 @@ impl DespawnKeyframeCmd {
 /// Mixed selections (keyframes + a scene entity) work: this system
 /// handles the keyframes, then `handle_entity_keys` handles the
 /// remaining non-keyframe entities normally. Both halves land on
-/// the history as independent commands, which is fine — undo
+/// the history as independent commands, which is fine: undo
 /// reverses them in push order.
 fn handle_keyframe_delete_intercept(world: &mut World) {
     let keyboard = world.resource::<ButtonInput<KeyCode>>();
@@ -845,7 +845,7 @@ fn handle_keyframe_delete_intercept(world: &mut World) {
         return;
     }
 
-    // Don't process delete while a text input is focused — matches
+    // Don't process delete while a text input is focused. Matches
     // the guard in `handle_entity_keys`.
     if world
         .resource::<bevy::input_focus::InputFocus>()
@@ -901,7 +901,7 @@ fn handle_keyframe_delete_intercept(world: &mut World) {
 }
 
 /// Typed, undo-aware spawn command for animation keyframes. Mirror of
-/// [`DespawnKeyframeCmd`] — execute spawns a fresh entity with the
+/// [`DespawnKeyframeCmd`]: execute spawns a fresh entity with the
 /// stored fields parented to the track, undo despawns it. Same ID-
 /// reuse avoidance rationale: direct `world.spawn` rather than
 /// `DynamicScene`.
@@ -1284,7 +1284,7 @@ fn handle_keyframe_paste(world: &mut World) {
         });
         let Some(track_entity) = track_entity else {
             warn!(
-                "Paste keyframe: no track for {}.{} on selected clip — add one via the inspector diamond first",
+                "Paste keyframe: no track for {}.{} on selected clip. Add one via the inspector diamond first",
                 entry.component_type_path, entry.field_path,
             );
             continue;
@@ -1353,7 +1353,7 @@ fn handle_keyframe_paste(world: &mut World) {
 /// toggles into the existing selection; plain click replaces with
 /// just the keyframe. Delete is then handled by the main editor's
 /// existing `delete_selected` path, which wraps despawns in
-/// `DespawnEntity` commands for undo safety — the animation crate
+/// `DespawnEntity` commands for undo safety. The animation crate
 /// deliberately does NOT own a delete key handler, so there's no
 /// risk of double-delete when the user has both a scene entity and
 /// a keyframe "selected."
@@ -1503,7 +1503,7 @@ fn register_animation_entities_in_ast(
 /// persist through JSN save/load (just two strings each), so this
 /// discovery step only needs to run once per glTF in a given session.
 ///
-/// The guard — "skip if any child already has a `GltfClipRef`" — keeps
+/// The guard ("skip if any child already has a `GltfClipRef`") keeps
 /// us from resurrecting clips the user deleted within the session.
 /// Adding new clips to the glTF file externally requires a scene
 /// reload to rediscover them, which matches Blender's "reload glTF"
@@ -1523,7 +1523,7 @@ fn discover_gltf_clips(
 ) {
     for (entity, source, children) in &sources {
         // Skip if this GltfSource already has any imported clip
-        // children — discovery has run at least once.
+        // children: discovery has run at least once.
         let any_existing = children
             .into_iter()
             .flatten()
@@ -2255,15 +2255,15 @@ fn auto_save_layout_on_change(
 
 /// Build the final DockTree (saved or default-split) BEFORE the
 /// reconciler materializes any content. This way each window's `build_fn`
-/// runs exactly once into its final home — no rebuild churn that would
-/// despawn freshly-spawned content while its deferred init systems
-/// (project_files refresh, material_browser scan, etc.) still hold
-/// pointers to it.
+/// runs exactly once into its final home with no rebuild churn, which
+/// would otherwise despawn freshly-spawned content while its deferred
+/// init systems (project_files refresh, material_browser scan, etc.)
+/// still hold pointers to it.
 ///
 /// Supports three save formats (in priority order):
-/// 1. `WorkspacesPersist` — full per-workspace registry (current).
-/// 2. Bare `DockTree` — single-workspace layout (older format).
-/// 3. None / unparseable — fall through to defaults.
+/// 1. `WorkspacesPersist`: full per-workspace registry (current).
+/// 2. Bare `DockTree`: single-workspace layout (older format).
+/// 3. None / unparseable: fall through to defaults.
 fn init_layout(world: &mut World) {
     let layout_json = world
         .get_resource::<crate::project::ProjectRoot>()
@@ -2276,10 +2276,12 @@ fn init_layout(world: &mut World) {
             serde_json::from_value::<jackdaw_panels::WorkspacesPersist>(json.clone())
         {
             if !persist.workspaces.is_empty() {
-                let mut registry = world.resource_mut::<jackdaw_panels::WorkspaceRegistry>();
-                persist.apply_to_registry(&mut registry);
-                let active_tree = registry.active_workspace().map(|w| w.tree.clone());
-                drop(registry);
+                let active_tree = {
+                    let mut registry =
+                        world.resource_mut::<jackdaw_panels::WorkspaceRegistry>();
+                    persist.apply_to_registry(&mut registry);
+                    registry.active_workspace().map(|w| w.tree.clone())
+                };
                 if let Some(tree) = active_tree {
                     world.insert_resource(tree);
                     loaded_tree = true;
@@ -2302,8 +2304,8 @@ fn init_layout(world: &mut World) {
 
     jackdaw_panels::reconcile::reconcile(world);
 
-    // Make sure the active workspace's `.tree` matches the live tree —
-    // covers both the "fresh defaults" path and the older bare-DockTree
+    // Make sure the active workspace's `.tree` matches the live tree.
+    // Covers both the "fresh defaults" path and the older bare-DockTree
     // load path, so subsequent workspace switches save/restore correctly.
     sync_active_workspace_from_live_tree(world);
 }
@@ -2490,7 +2492,7 @@ fn register_all_dock_windows(mut registry: ResMut<jackdaw_panels::WindowRegistry
                     ..default()
                 },
                 children![(
-                    Text::new("Terminal window — not implemented yet"),
+                    Text::new("Terminal window (not implemented yet)"),
                     TextFont {
                         font_size: 11.0,
                         ..default()
@@ -2500,8 +2502,6 @@ fn register_all_dock_windows(mut registry: ResMut<jackdaw_panels::WindowRegistry
             ));
         }),
     });
-
-    // ── Left top: Scene Tree ──
 
     registry.register(jackdaw_panels::DockWindowDescriptor {
         id: "jackdaw.hierarchy".into(),
@@ -2545,8 +2545,6 @@ fn register_all_dock_windows(mut registry: ResMut<jackdaw_panels::WindowRegistry
         }),
     });
 
-    // ── Left bottom: Project Files ──
-
     registry.register(jackdaw_panels::DockWindowDescriptor {
         id: "jackdaw.project_files".into(),
         name: "Project Files".into(),
@@ -2563,8 +2561,6 @@ fn register_all_dock_windows(mut registry: ResMut<jackdaw_panels::WindowRegistry
                 .needs_refresh = true;
         }),
     });
-
-    // ── Right sidebar: Inspector tabs ──
 
     registry.register(jackdaw_panels::DockWindowDescriptor {
         id: "jackdaw.inspector.components".into(),

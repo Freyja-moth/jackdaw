@@ -257,12 +257,11 @@ fn reconcile_split(world: &mut World, entity: Entity, node_id: NodeId, split: &D
 
     world.entity_mut(entity).insert(NodeBinding(node_id));
 
-    // A split always has visible leaf children beneath it, so the
-    // container itself must be visible. If the host had been collapsed
-    // (Display::None + zero geometry) while it was previously an empty
-    // leaf, restore it here — otherwise its freshly-reconciled children
-    // render inside a zero-sized hidden parent and the whole subtree is
-    // invisible.
+    // A split always has visible leaf children, so the container must
+    // be visible. If the host was collapsed (Display::None + zero
+    // geometry) as an empty leaf just before the transition, restore
+    // it here so the freshly-reconciled children aren't hidden inside
+    // a zero-sized parent.
     set_host_visible(world, entity, true);
 }
 
@@ -403,7 +402,7 @@ fn set_host_visible(world: &mut World, entity: Entity, visible: bool) {
     // actually transitions. Unconditionally setting width/height every
     // reconcile pass would stomp on the ratio-based percentages that
     // `recalculate_group` has already written for an already-visible
-    // panel — producing a "massive" panel (width: 100% of Row parent).
+    // panel, producing a panel that fills 100% of its Row parent.
     if let Some(mut node) = world.entity_mut(entity).get_mut::<Node>() {
         if node.display != target {
             node.display = target;
@@ -423,17 +422,17 @@ fn set_host_visible(world: &mut World, entity: Entity, visible: bool) {
         } else if node.width == zero {
             // Coming back from hide: restore to 100% so
             // `recalculate_group` can overwrite the flex-axis and the
-            // cross-axis fills. Only do this once per show — don't
-            // stomp on an already-recalculated width.
+            // cross-axis fills. Only do this once per show so an
+            // already-recalculated width isn't stomped.
             node.width = Val::Percent(100.0);
             node.height = Val::Percent(100.0);
             any_changed = true;
         }
     }
 
-    // Handle: ONLY toggle Display. Don't touch width/height — a
-    // `PanelHandle`'s natural size is a 3px stripe along the flex axis;
-    // forcing 100% would make it fill the parent.
+    // Handle: ONLY toggle Display. Don't touch width/height. A
+    // `PanelHandle`'s natural size is a 3px stripe along the flex
+    // axis; forcing 100% would make it fill the parent.
     if let Some(handle) = adjacent_handle {
         if let Some(mut node) = world.entity_mut(handle).get_mut::<Node>() {
             if node.display != target {
@@ -443,32 +442,20 @@ fn set_host_visible(world: &mut World, entity: Entity, visible: bool) {
         }
     }
 
-    // Bump Panel's change tick so the surrounding `recalculate_group`
-    // re-runs. The host entity carries one of two Panel types:
-    //   1. `jackdaw_widgets::split_panel::Panel` — for editor-spawned
-    //      outer hosts (three-column's `panel(1)` etc.).
-    //   2. `jackdaw_panels::split::Panel` — for reconciler-spawned
-    //      split children inside an anchor host.
-    // Try both; only one is ever present. Using an explicit `DerefMut`
-    // via `ratio = ratio` instead of `Mut::set_changed()` because in
-    // Bevy 0.18 `set_changed` through `EntityWorldMut::get_mut` doesn't
-    // reliably flag `Changed<Panel>` for filter queries in later
-    // systems.
-    #[allow(
-        clippy::almost_swapped,
-        reason = "intentional DerefMut to bump change tick"
-    )]
+    // Flag the host's Panel component as changed so `recalculate_group`
+    // redistributes sibling widths this frame. The host may carry one
+    // of two Panel types: `jackdaw_widgets::split_panel::Panel` on
+    // editor-spawned outer hosts, or `jackdaw_panels::split::Panel` on
+    // reconciler-spawned split children. Only one is present; try both.
     if any_changed {
         if let Some(mut panel) = world
             .entity_mut(entity)
             .get_mut::<jackdaw_widgets::split_panel::Panel>()
         {
-            let r = panel.ratio;
-            panel.ratio = r;
+            panel.set_changed();
         }
         if let Some(mut panel) = world.entity_mut(entity).get_mut::<Panel>() {
-            let r = panel.ratio;
-            panel.ratio = r;
+            panel.set_changed();
         }
     }
 }

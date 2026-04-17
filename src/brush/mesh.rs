@@ -4,6 +4,7 @@ use bevy::{
         CompressedImageFormats, ImageAddressMode, ImageFilterMode, ImageSampler,
         ImageSamplerDescriptor, ImageType,
     },
+    light::{NotShadowCaster, NotShadowReceiver},
     math::Affine2,
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
@@ -166,7 +167,8 @@ pub fn regenerate_brush_meshes(
             let mesh_handle = meshes.add(mesh);
 
             // Use the face's material handle if set, otherwise fall back to grid default
-            let material = if face_data.material != Handle::default() {
+            let is_default = face_data.material == Handle::default();
+            let material = if !is_default {
                 face_data.material.clone()
             } else if effectively_selected || preview.is_some() {
                 palette.default_selected_material.clone()
@@ -187,6 +189,11 @@ pub fn regenerate_brush_meshes(
                     NonSerializable,
                 ))
                 .id();
+            if is_default {
+                commands
+                    .entity(face_entity)
+                    .insert((NotShadowCaster, NotShadowReceiver));
+            }
 
             face_entities.push(face_entity);
         }

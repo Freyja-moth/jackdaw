@@ -1673,7 +1673,9 @@ fn manage_draw_preview_mesh(
                 base_color: default_style::DRAW_PREVIEW_MESH,
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
+                double_sided: true,
                 cull_mode: None,
+                perceptual_roughness: 1.0,
                 ..default()
             })
         }),
@@ -1682,7 +1684,9 @@ fn manage_draw_preview_mesh(
                 base_color: default_style::CUT_PREVIEW_MESH,
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
+                double_sided: true,
                 cull_mode: None,
+                perceptual_roughness: 1.0,
                 ..default()
             })
         }),

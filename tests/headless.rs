@@ -4,10 +4,8 @@ use bevy::{
         RenderPlugin,
         settings::{RenderCreation, WgpuSettings},
     },
-    state::app::StatesPlugin,
     winit::WinitPlugin,
 };
-use bevy_enhanced_input::prelude::*;
 use jackdaw::prelude::*;
 
 #[test]

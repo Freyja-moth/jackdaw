@@ -19,8 +19,8 @@ use jackdaw_api::prelude::*;
 pub struct SampleExtension;
 
 impl JackdawExtension for SampleExtension {
-    fn name(&self) -> &str {
-        "sample"
+    fn name() -> String {
+        "sample".to_string()
     }
 
     fn register_input_contexts(&self, app: &mut App) {

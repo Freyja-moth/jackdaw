@@ -83,8 +83,8 @@ impl SampleExtension {
 }
 
 impl JackdawExtension for SampleExtension {
-    fn name(&self) -> &str {
-        "sample"
+    fn name() -> String {
+        "sample".to_string()
     }
 
     fn register(&self, ctx: &mut ExtensionContext) {

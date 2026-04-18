@@ -236,56 +236,37 @@ impl ExtensionCatalog {
     }
 }
 
-/// Register an extension into the catalog and perform its one-time BEI
-/// input-context registration.
-///
-/// Call this once per extension during app setup. Registering the constructor
-/// lets the Plugins dialog list the extension; running
-/// `register_input_contexts` ensures its BEI context types are known to the
-/// framework. Enabling and disabling the extension later only re-runs
-/// `register()`, never `register_input_contexts()` (BEI panics on duplicate
-/// registrations).
-pub fn register_extension<F>(app: &mut App, name: &str, ctor: F)
-where
-    F: Fn() -> Box<dyn crate::JackdawExtension> + Send + Sync + 'static,
-{
-    // Construct a throwaway instance to (a) register context types and
-    // (b) read the extension's declared `kind`. Doing both against the
-    // same instance avoids a second construction just to classify.
-    let sample = ctor();
-    sample.register_input_contexts(app);
-    let kind = sample.kind();
-    drop(sample);
-
-    app.world_mut()
-        .resource_mut::<ExtensionCatalog>()
-        .register(name, kind, ctor);
-}
-
 pub trait ExtensionAppExt {
-    fn register_extension<T: crate::JackdawExtension + Default>(&mut self) -> &mut Self;
-    fn register_extension_with<T: crate::JackdawExtension + Default>(
+    /// Register an extension into the catalog and perform its one-time BEI
+    /// input-context registration.
+    ///
+    /// Call this once per extension during app setup. Registering the constructor
+    /// lets the Plugins dialog list the extension; running
+    /// `register_input_contexts` ensures its BEI context types are known to the
+    /// framework. Enabling and disabling the extension later only re-runs
+    /// `register()`, never `register_input_contexts()` (BEI panics on duplicate
+    /// registrations).
+    ///
+    /// See also [`Self::register_extension_with`].
+    fn register_extension<T: crate::JackdawExtension + Default>(&mut self) -> &mut Self {
+        self.register_extension_with::<T>(|| Box::new(T::default()))
+    }
+
+    /// Like [`Self::register_extension`], but with a custom constructor.
+    fn register_extension_with<T: crate::JackdawExtension>(
         &mut self,
         ctor: impl Fn() -> Box<dyn crate::JackdawExtension> + Send + Sync + 'static,
     ) -> &mut Self;
 }
 
 impl ExtensionAppExt for App {
-    fn register_extension<T: crate::JackdawExtension + Default>(&mut self) -> &mut Self {
-        let ext = T::default();
-        let name = ext.name();
-        // TODO: remove `name` duplication
-        // can we do `fn name() -> String` without `&self` plz?
-        register_extension(self, name, || Box::new(T::default()));
-        self
-    }
-    fn register_extension_with<T: crate::JackdawExtension + Default>(
+    fn register_extension_with<T: crate::JackdawExtension>(
         &mut self,
         ctor: impl Fn() -> Box<dyn crate::JackdawExtension> + Send + Sync + 'static,
     ) -> &mut Self {
-        let ext = ctor();
-        let name = ext.name();
-        register_extension(self, name, ctor);
+        self.world_mut()
+            .resource_mut::<ExtensionCatalog>()
+            .register(T::name(), T::kind(), ctor);
         self
     }
 }

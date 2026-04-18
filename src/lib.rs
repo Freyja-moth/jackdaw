@@ -55,10 +55,14 @@ use bevy::{
     picking::hover::HoverMap,
     prelude::*,
 };
+use jackdaw_api::prelude::ExtensionAppExt;
 use jackdaw_feathers::EditorFeathersPlugin;
 use jackdaw_feathers::dialog::EditorDialog;
 use jackdaw_widgets::menu_bar::MenuAction;
 use selection::Selection;
+use viewable_camera_extension::ViewableCameraExtension;
+
+use crate::builtin_extensions::*;
 
 /// Everything needed to start using Jackdaw.
 pub mod prelude {
@@ -241,27 +245,12 @@ impl Plugin for EditorPlugin {
         // Runs during `build()` so BEI's `finish()` hook sees every
         // context type. Built-ins override `kind()` to `Builtin`; the
         // rest default to `Custom`.
-        jackdaw_api::register_extension(app, "core_windows", || {
-            Box::new(builtin_extensions::CoreWindowsExtension)
-        });
-        jackdaw_api::register_extension(app, "asset_browser", || {
-            Box::new(builtin_extensions::AssetBrowserExtension)
-        });
-        jackdaw_api::register_extension(app, "timeline", || {
-            Box::new(builtin_extensions::TimelineExtension)
-        });
-        jackdaw_api::register_extension(app, "terminal", || {
-            Box::new(builtin_extensions::TerminalExtension)
-        });
-        jackdaw_api::register_extension(app, "inspector", || {
-            Box::new(builtin_extensions::InspectorExtension)
-        });
-        jackdaw_api::register_extension(app, "sample", || {
-            Box::new(sample_extension::SampleExtension)
-        });
-        jackdaw_api::register_extension(app, "viewable_camera", || {
-            Box::new(viewable_camera_extension::ViewableCameraExtension)
-        });
+        app.register_extension::<CoreWindowsExtension>()
+            .register_extension::<AssetBrowserExtension>()
+            .register_extension::<TimelineExtension>()
+            .register_extension::<TerminalExtension>()
+            .register_extension::<InspectorExtension>()
+            .register_extension::<ViewableCameraExtension>();
 
         // Must run after every plugin's `finish()`: BEI initializes
         // `ContextInstances<PreUpdate>` there, and spawning a context

@@ -1,3 +1,5 @@
+//! Main crate for the Jackdaw editor.
+//! Usage of this crate is meant for headless operation. If you want to interact with the jackdaw API for extensions, use the `jackdaw_api` crate instead.
 pub mod add_entity_picker;
 pub mod alignment_guides;
 pub mod asset_browser;
@@ -57,6 +59,11 @@ use jackdaw_feathers::EditorFeathersPlugin;
 use jackdaw_feathers::dialog::EditorDialog;
 use jackdaw_widgets::menu_bar::MenuAction;
 use selection::Selection;
+
+/// Everything needed to start using Jackdaw.
+pub mod prelude {
+    pub use crate::EditorPlugin;
+}
 
 /// System set for all editor interaction systems (input handling, viewport clicks,
 /// gizmo drags, etc.). Automatically disabled when any dialog is open.

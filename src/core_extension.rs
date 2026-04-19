@@ -2,9 +2,10 @@ use bevy::prelude::*;
 use jackdaw_api::prelude::*;
 
 pub(super) fn plugin(app: &mut App) {
-    let _ = app;
+    app.register_extension::<JackdawCoreExtension>();
 }
 
+#[derive(Default)]
 pub struct JackdawCoreExtension;
 
 impl JackdawExtension for JackdawCoreExtension {
@@ -15,5 +16,7 @@ impl JackdawExtension for JackdawCoreExtension {
         ExtensionKind::Builtin
     }
 
-    fn register(&self, _ctx: &mut ExtensionContext) {}
+    fn register(&self, _ctx: &mut ExtensionContext) {
+        // todo: move as much builtin functionality into operators here as possible!
+    }
 }

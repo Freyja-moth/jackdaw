@@ -8,6 +8,8 @@ mod util;
 
 #[test]
 fn run_integration_tests() {
+    // TODO: this integration test setup would be great for extension writers too, but it requires quite a bit of boilerplate to get there.
+    // we should probably provide a macro that sets up everything under a neat `#[test]` for you, so you can directly write your test operator.
     run_test::<IntegrationTestOneOp>();
 }
 

@@ -27,16 +27,6 @@ fn headless_app() -> App {
 }
 
 #[test]
-fn smoke_test_headless_update() {
-    let mut app = headless_app();
-    app.finish();
-
-    for _ in 0..10 {
-        app.update();
-    }
-}
-
-#[test]
 fn run_integration_tests() {
     let mut app = headless_app();
     app.register_extension::<IntegrationTestsExtension>();

@@ -53,7 +53,7 @@ pub enum PieButton {
 /// authored.
 ///
 /// Tagged automatically via the `On<Add, Transform>` observer in
-/// [`tag_game_spawned`]. Entities that spawn without a `Transform`
+/// `tag_game_spawned`. Entities that spawn without a `Transform`
 /// aren't tagged; in practice this covers the 99% of game-spawned
 /// entities that have one (meshes, lights, cameras, sprites, UI).
 #[derive(Component, Clone, Copy, Debug, Default)]

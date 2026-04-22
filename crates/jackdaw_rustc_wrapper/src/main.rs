@@ -1,51 +1,47 @@
-//! Thin rustc wrapper for jackdaw extension/game projects.
+//! Thin rustc wrapper for jackdaw extension and game projects.
 //!
 //! # What it does
 //!
-//! Cargo invokes this binary as `RUSTC_WRAPPER`, meaning every rustc
-//! call in the project passes through here first. For the user's own
-//! crate — detected via `CARGO_PRIMARY_PACKAGE=1` — we rewrite the
-//! rustc argv so that:
+//! Cargo invokes this binary as `RUSTC_WRAPPER`, so every rustc call
+//! in the project passes through here. For the user's primary crate
+//! (detected via `CARGO_PRIMARY_PACKAGE=1`) we rewrite the argv:
 //!
-//! * `--extern bevy=<anything>` is replaced with
-//!   `--extern bevy=$JACKDAW_SDK_DYLIB`. The user's Cargo.toml
-//!   declares `bevy = "0.18"` so that bevy's proc macros read it
-//!   via `CARGO_MANIFEST_DIR` and emit correct `::bevy::…` paths.
-//!   Cargo compiles real bevy into the user's target dir; the
-//!   resulting rlib is ignored because the wrapper redirects the
-//!   `--extern` flag to `libjackdaw_sdk.so`. The wasted compile is
-//!   a one-time cost; it keeps the user's Cargo.toml completely
-//!   normal (no `[patch.crates-io]` tricks, no stub crate).
-//! * `--extern jackdaw_api=$JACKDAW_SDK_DYLIB` is appended
-//!   unconditionally. The user never declares `jackdaw_api` in
-//!   Cargo.toml — the wrapper injects it so `use jackdaw_api::…`
-//!   just works.
+//! * `--extern bevy=<anything>` becomes
+//!   `--extern bevy=$JACKDAW_SDK_DYLIB`. The user's Cargo.toml still
+//!   declares `bevy = "0.18"` so bevy's proc macros find it via
+//!   `CARGO_MANIFEST_DIR` and emit `::bevy::…` paths. Cargo compiles
+//!   real bevy into the user's target dir; the resulting rlib is
+//!   ignored because the wrapper points the `--extern` at
+//!   `libjackdaw_sdk.so`. The extra compile is a one-time cost that
+//!   keeps the user's Cargo.toml normal (no patches, no stub crate).
+//! * `--extern jackdaw_api=$JACKDAW_SDK_DYLIB` is injected. The user
+//!   never declares `jackdaw_api`; the wrapper makes
+//!   `use jackdaw_api::…` work anyway.
 //! * `-L dependency=$JACKDAW_SDK_DEPS` is appended so rustc can find
 //!   transitive rlib metadata when resolving re-exported types.
-//! * `-C prefer-dynamic` is appended so rustc links against the SDK
-//!   dylib rather than statically embedding its (non-existent at the
-//!   stub) rlib form.
+//! * `-C prefer-dynamic` is appended so rustc links through the SDK
+//!   dylib rather than statically embedding its rlib form.
 //!
-//! For every other rustc invocation (compiling the tiny `bevy` stub,
-//! compiling build scripts, etc.) we pass argv through untouched.
+//! Every other rustc invocation (build scripts, dependency
+//! compilation, etc.) passes through untouched.
 //!
 //! # Why
 //!
-//! Cargo's `-Cmetadata` hash is not deterministic across independent
-//! workspaces, so the "build bevy twice and hope the hashes line up"
-//! approach doesn't work. By forcing the user crate to link against
-//! the one `libjackdaw_sdk.so` that ships alongside the editor, every
-//! `TypeId::of::<T>()` call site in the user's code uses the same
-//! crate hash as the editor, and reflection / dlopen works.
+//! Cargo's `-Cmetadata` hash is not stable across independent
+//! workspaces, so "build bevy twice and hope the hashes line up"
+//! doesn't work. Forcing the user crate to link against the one
+//! `libjackdaw_sdk.so` shipped with the editor makes every
+//! `TypeId::of::<T>()` in user code agree with the editor's copy,
+//! which is what reflection and dlopen require.
 //!
 //! # Env vars the wrapper reads
 //!
-//! | Var                   | Required | Purpose                            |
-//! |-----------------------|----------|------------------------------------|
-//! | `JACKDAW_SDK_DYLIB`   | yes      | Absolute path to `libjackdaw_sdk.so` |
-//! | `JACKDAW_SDK_DEPS`    | yes      | Absolute path to the `deps/` dir   |
-//! | `JACKDAW_WRAPPER_LOG` | no       | If `1`, log rewrites to stderr     |
-//! | `CARGO_PRIMARY_PACKAGE` | (set by cargo) | `1` while compiling the user crate |
+//! | Var                     | Required       | Purpose                              |
+//! |-------------------------|----------------|--------------------------------------|
+//! | `JACKDAW_SDK_DYLIB`     | yes            | Absolute path to `libjackdaw_sdk.so` |
+//! | `JACKDAW_SDK_DEPS`      | yes            | Absolute path to the `deps/` dir     |
+//! | `JACKDAW_WRAPPER_LOG`   | no             | If `1`, log rewrites to stderr       |
+//! | `CARGO_PRIMARY_PACKAGE` | (set by cargo) | `1` while compiling the user crate   |
 
 use std::env;
 use std::ffi::OsString;
@@ -118,7 +114,8 @@ fn rewrite_primary_args(argv: &mut Vec<OsString>, log: bool) -> Result<(), Strin
                 if log {
                     eprintln!(
                         "jackdaw-rustc-wrapper: rewrite --extern {:?} -> {:?}",
-                        argv[i + 1], new_value
+                        argv[i + 1],
+                        new_value
                     );
                 }
                 argv[i + 1] = new_value;

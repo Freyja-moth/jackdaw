@@ -420,13 +420,10 @@ pub fn disable_extension(world: &mut World, name: &str) -> bool {
 #[derive(Component)]
 pub(crate) struct StoredExtension(pub(crate) Box<dyn crate::JackdawExtension>);
 
-/// Register a dylib-loaded extension into an already-running editor's
-/// catalog. Called by the runtime dylib loader (`jackdaw_loader`)
-/// which has already determined `name` and `kind` from the dylib's
-/// entry metadata. Distinct from [`ExtensionAppExt::register_extension_dynamic`],
-/// which operates on `&mut App` at startup; this one works on
-/// `&mut World` so it can be called from the install pipeline after
-/// the app is running.
+/// Register a dylib-loaded extension into a running editor's catalog.
+/// The dylib loader uses this after reading `name` and `kind` from
+/// the dylib's entry metadata. Operates on `&mut World` (not `&mut
+/// App`) because installs happen post-startup.
 pub fn register_dylib_extension<F>(
     world: &mut World,
     name: impl Into<String>,

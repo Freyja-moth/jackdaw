@@ -146,13 +146,11 @@ fn is_dylib_event(event: &Event) -> bool {
     // the Debounce collapse the burst. Explicitly skip pure
     // attribute changes (chmod / chown) and Access events — neither
     // implies new code is available.
-    matches!(
-        event.kind,
-        EventKind::Create(_) | EventKind::Modify(_)
-    ) && !matches!(
-        event.kind,
-        EventKind::Modify(notify::event::ModifyKind::Metadata(_))
-    )
+    matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_))
+        && !matches!(
+            event.kind,
+            EventKind::Modify(notify::event::ModifyKind::Metadata(_))
+        )
 }
 
 /// Collapses a burst of events on the same path into a single

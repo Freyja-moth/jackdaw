@@ -293,8 +293,9 @@ fn poll_install_outcome(
         }
         Err(err) => {
             warn!("HotReload: install failed: {err}");
-            install_status.message =
-                Some(format!("Hot reload install failed: {err}. Rebuild to retry."));
+            install_status.message = Some(format!(
+                "Hot reload install failed: {err}. Rebuild to retry."
+            ));
         }
     }
 }

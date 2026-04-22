@@ -143,9 +143,7 @@ macro_rules! export_game {
                 $crate::runtime::GamePlugin::build(&$plugin, &mut ctx);
             }
 
-            unsafe extern "C" fn __jackdaw_game_teardown(
-                world: *mut ::bevy::ecs::world::World,
-            ) {
+            unsafe extern "C" fn __jackdaw_game_teardown(world: *mut ::bevy::ecs::world::World) {
                 // SAFETY: same contract as `build`.
                 let world: &mut ::bevy::ecs::world::World = unsafe { &mut *world };
                 let mut ctx = $crate::runtime::GameApp::new(world, __JACKDAW_GAME_NAME_STR);

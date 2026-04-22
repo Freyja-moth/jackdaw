@@ -6,9 +6,8 @@
 //! walks every configured search path, opens each dynamic library
 //! with `libloading`, looks up the `jackdaw_extension_entry_v1`
 //! symbol (see [`jackdaw_api_internal::ffi::ENTRY_SYMBOL`]), verifies ABI
-//! compatibility, and registers the extension through the normal
-//! [`jackdaw_api_internal::register_extension`] path used for static
-//! extensions.
+//! compatibility, and registers the extension through
+//! [`jackdaw_api_internal::lifecycle::register_dylib_extension`].
 //!
 //! The plugin lives in [`LoadedDylibs`] as long as the `App` lives.
 //! Unloading a library while systems still reference code inside it
@@ -130,8 +129,8 @@ impl LoadedDylibs {
 /// Installs the dylib extension loader.
 ///
 /// Configuration lives on the plugin itself because loading happens
-/// during `build()` (so the loader can use `&mut App` to reuse
-/// `jackdaw_api_internal::register_extension`).
+/// during `build()`, so the loader can reach `&mut App` to register
+/// each discovered dylib into the extension catalog.
 pub struct DylibLoaderPlugin {
     /// Extra search paths added on top of the defaults.
     pub extra_paths: Vec<PathBuf>,
@@ -474,7 +473,14 @@ fn try_load(app: &mut App, path: &Path) -> Result<LoadedKind, LoadError> {
 
             Ok(LoadedKind::Extension(name))
         }
-        (lib, OpenedKind::Game { name, build, teardown }) => {
+        (
+            lib,
+            OpenedKind::Game {
+                name,
+                build,
+                teardown,
+            },
+        ) => {
             // Register the game's `#[derive(Reflect)]` types into our
             // AppTypeRegistry via the exported symbol, then assign
             // ComponentIds so the inspector sees them before build()
@@ -593,18 +599,21 @@ pub fn load_from_path(world: &mut World, path: &Path) -> Result<LoadedKind, Load
 
             Ok(LoadedKind::Extension(name))
         }
-        (lib, OpenedKind::Game { name, build, teardown }) => {
+        (
+            lib,
+            OpenedKind::Game {
+                name,
+                build,
+                teardown,
+            },
+        ) => {
             let already_loaded = world
                 .resource::<GameCatalog>()
                 .games
                 .iter()
                 .any(|n| n == &name);
             if already_loaded {
-                let prior = world
-                    .resource::<GameCatalog>()
-                    .entries
-                    .get(&name)
-                    .copied();
+                let prior = world.resource::<GameCatalog>().entries.get(&name).copied();
                 if let Some(prior_entry) = prior {
                     info!("Hot reload: tearing down prior version of `{name}`");
                     let world_ptr: *mut bevy::ecs::world::World = world as *mut _;
@@ -621,9 +630,8 @@ pub fn load_from_path(world: &mut World, path: &Path) -> Result<LoadedKind, Load
             register_derived_component_ids(world);
 
             let world_ptr: *mut bevy::ecs::world::World = world as *mut _;
-            let build_result = std::panic::catch_unwind(AssertUnwindSafe(|| unsafe {
-                build(world_ptr)
-            }));
+            let build_result =
+                std::panic::catch_unwind(AssertUnwindSafe(|| unsafe { build(world_ptr) }));
             if build_result.is_err() {
                 warn!("load_from_path: build panicked for `{name}`");
                 world.resource_mut::<LoadedDylibs>().libs.push(lib);
@@ -667,9 +675,7 @@ enum OpenedKind {
 /// separately so callers can look up extra symbols (like the reflect-
 /// register FFI symbol) on the loaded library before moving the handle
 /// into `LoadedDylibs`.
-fn open_and_verify_keep_lib(
-    path: &Path,
-) -> Result<(libloading::Library, OpenedKind), LoadError> {
+fn open_and_verify_keep_lib(path: &Path) -> Result<(libloading::Library, OpenedKind), LoadError> {
     match open_and_verify(path)? {
         OpenedDylib::Extension { lib, name, ctor } => {
             Ok((lib, OpenedKind::Extension { name, ctor }))
@@ -709,20 +715,19 @@ fn call_reflect_register_symbol(world: &mut World, lib: &libloading::Library) {
     };
     let registry_handle = registry_res.clone();
 
-    let reg_sym: libloading::Symbol<ReflectRegisterFn> =
-        match unsafe { lib.get(REFLECT_REGISTER_SYMBOL) } {
-            Ok(s) => s,
-            Err(e) => {
-                debug!("reflect-register: symbol lookup failed: {e}; dylib has no types to register");
-                return;
-            }
-        };
+    let reg_sym: libloading::Symbol<ReflectRegisterFn> = match unsafe {
+        lib.get(REFLECT_REGISTER_SYMBOL)
+    } {
+        Ok(s) => s,
+        Err(e) => {
+            debug!("reflect-register: symbol lookup failed: {e}; dylib has no types to register");
+            return;
+        }
+    };
 
     let before = registry_handle.read().iter().count();
     let mut guard = registry_handle.write();
-    let call_result = std::panic::catch_unwind(AssertUnwindSafe(|| unsafe {
-        reg_sym(&mut *guard)
-    }));
+    let call_result = std::panic::catch_unwind(AssertUnwindSafe(|| unsafe { reg_sym(&mut guard) }));
     let after = guard.iter().count();
     drop(guard);
     if call_result.is_err() {

@@ -290,7 +290,9 @@ impl<'w> GameApp<'w> {
 
         // 2) Observer entities tagged with `GameRegistered(name)`.
         let mut to_despawn = Vec::new();
-        let mut q = self.world.query::<(bevy::prelude::Entity, &GameRegistered)>();
+        let mut q = self
+            .world
+            .query::<(bevy::prelude::Entity, &GameRegistered)>();
         for (entity, tag) in q.iter(self.world) {
             if tag.0 == name {
                 to_despawn.push(entity);
@@ -333,8 +335,8 @@ impl<'w> GameApp<'w> {
 ///
 /// Usage:
 ///
-/// ```ignore
-/// ctx.spawn_observer(|on: On<Add, MyComp>, mut commands: Commands| { … });
+/// ```text
+/// ctx.spawn_observer(|on: On<Add, MyComp>, mut commands: Commands| { ... });
 /// ```
 impl<'w> GameApp<'w> {
     pub fn spawn_observer<E, B, M>(

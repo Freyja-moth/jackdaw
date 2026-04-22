@@ -167,7 +167,11 @@ fn write_cargo_config(project_path: &Path) {
              not found at {}. Scaffolded project will only build through \
              jackdaw's Build button until you install jackdaw or set \
              JACKDAW_SDK_DIR.",
-            paths.dylib.parent().map(|p| p.display().to_string()).unwrap_or_default()
+            paths
+                .dylib
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
         );
         return;
     }

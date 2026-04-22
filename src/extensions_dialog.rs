@@ -415,7 +415,7 @@ fn handle_install(
                 // Soft-fail: caller will detect this and run the
                 // auto-clean-and-retry recovery path. Don't update
                 // the install-status message; the retry UI owns it.
-                format!("SDK mismatch detected; cleaning project cache…")
+                "SDK mismatch detected; cleaning project cache…".to_string()
             } else {
                 format!(
                     "Installed to {}, but live-load failed: {err}. Restart the editor to retry.",
@@ -573,10 +573,7 @@ fn cleanup_prior_installs(
             continue;
         }
         if let Err(e) = std::fs::remove_file(&path) {
-            warn!(
-                "Failed to clean up prior install {}: {e}",
-                path.display()
-            );
+            warn!("Failed to clean up prior install {}: {e}", path.display());
         }
     }
 }

@@ -96,7 +96,7 @@ struct NewProjectStatusText;
 #[derive(Component)]
 struct NewProjectProgressContainer;
 
-/// Wraps the "currently compiling <crate>" label.
+/// Wraps the "currently compiling `<crate>`" label.
 #[derive(Component)]
 struct NewProjectProgressCrateLabel;
 
@@ -1275,7 +1275,6 @@ fn on_create_new_project(
 
 fn poll_new_project_tasks(
     mut state: ResMut<NewProjectState>,
-    mut commands: Commands,
     mut location_texts: Query<&mut Text, With<NewProjectLocationText>>,
     mut status_texts: Query<
         &mut Text,
@@ -1445,9 +1444,7 @@ fn poll_new_project_tasks(
                 }
                 Err(err) => {
                     warn!("Cargo clean failed: {err}");
-                    state.status = Some(format!(
-                        "Auto-recovery failed during cargo clean: {err}"
-                    ));
+                    state.status = Some(format!("Auto-recovery failed during cargo clean: {err}"));
                     state.pending_project = None;
                     state.retry_attempted = false;
                 }
@@ -1487,7 +1484,7 @@ fn refresh_build_progress_snapshot(mut state: ResMut<NewProjectState>) {
 }
 
 /// Reflect the current snapshot into the modal's progress UI:
-/// toggles the container, updates the "compiling <crate>" label,
+/// toggles the container, updates the "compiling `<crate>`" label,
 /// scrubs the progress-bar fill, and sets the log-tail text.
 fn refresh_build_progress_ui(
     state: Res<NewProjectState>,
@@ -1597,10 +1594,7 @@ fn apply_pending_install(world: &mut World) {
     let Some(artifact) = artifact_opt else {
         return;
     };
-    let outcome_arc = world
-        .resource::<NewProjectState>()
-        .metadata_outcome
-        .clone();
+    let outcome_arc = world.resource::<NewProjectState>().metadata_outcome.clone();
 
     let result = crate::extensions_dialog::handle_install_from_path(world, artifact);
     let is_ok = result.is_ok();

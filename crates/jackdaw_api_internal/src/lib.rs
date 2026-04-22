@@ -1,6 +1,6 @@
 //! Public API for Jackdaw editor extensions.
 //!
-//! Extensions are entities. An extension entity holds an [`Extension`](lifecycle::Extension)
+//! Extensions are entities. An extension entity holds an [`lifecycle::Extension`]
 //! component, and every registration (operators, windows, BEI contexts,
 //! panel extensions) spawns child entities under it. Unloading an
 //! extension is `world.entity_mut(ext).despawn()`; Bevy cascades through
@@ -237,7 +237,7 @@ impl<'a> ExtensionContext<'a> {
         self
     }
 
-    /// The root [`Extension`](lifecycle::Extension) entity.
+    /// The root [`lifecycle::Extension`] entity.
     ///
     /// See also: [`ExtensionContext::entity`] and [`ExtensionContext::entity_mut`].
     pub fn id(&self) -> Entity {

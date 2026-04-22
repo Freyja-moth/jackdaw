@@ -23,11 +23,9 @@ pub mod core_extension;
 pub mod ext_build;
 mod extension_lifecycle;
 pub mod extension_watcher;
-pub mod hot_reload;
-pub mod restart;
-pub mod sdk_paths;
 pub mod extensions_config;
 pub mod extensions_dialog;
+pub mod hot_reload;
 pub mod layout;
 pub mod material_browser;
 pub mod material_preview;
@@ -42,7 +40,9 @@ pub mod project;
 pub mod project_files;
 pub mod project_select;
 pub mod remote;
+pub mod restart;
 pub mod scene_io;
+pub mod sdk_paths;
 pub mod selection;
 pub mod snapping;
 pub mod status_bar;
@@ -68,9 +68,6 @@ use jackdaw_feathers::dialog::EditorDialog;
 use jackdaw_feathers::{EditorFeathersPlugin, tooltip::Tooltip};
 use jackdaw_widgets::menu_bar::MenuAction;
 use selection::Selection;
-use viewable_camera_extension::ViewableCameraExtension;
-
-use crate::builtin_extensions::*;
 
 /// Everything needed to start using Jackdaw.
 pub mod prelude {
@@ -158,7 +155,8 @@ pub struct NonSerializable;
 ///     .run();
 /// ```
 pub struct EditorPlugin {
-    extensions: Vec<std::sync::Arc<dyn Fn() -> Box<dyn jackdaw_api::JackdawExtension> + Send + Sync>>,
+    extensions:
+        Vec<std::sync::Arc<dyn Fn() -> Box<dyn jackdaw_api::JackdawExtension> + Send + Sync>>,
     register_builtins: bool,
     dylib_loader: Option<DylibLoaderConfig>,
 }

@@ -260,9 +260,7 @@ pub fn build_extension_project_with_progress(
         }
     });
 
-    let status = child
-        .wait()
-        .map_err(|e| BuildError::BuildSpawn(e))?;
+    let status = child.wait().map_err(|e| BuildError::BuildSpawn(e))?;
     let _ = stdout_handle.join();
     let _ = stderr_handle.join();
 

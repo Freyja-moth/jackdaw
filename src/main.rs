@@ -31,11 +31,12 @@ fn main() -> AppExit {
     // to wherever the user was. The parent already built +
     // installed the dylib; the startup loader will pick it up
     // normally, so we don't need to rebuild.
-    let respawn_skip_build =
-        std::env::var_os(jackdaw::restart::ENV_SKIP_INITIAL_BUILD).is_some();
+    let respawn_skip_build = std::env::var_os(jackdaw::restart::ENV_SKIP_INITIAL_BUILD).is_some();
     let auto_open = if respawn_skip_build {
-        jackdaw::project::read_last_project()
-            .map(|path| jackdaw::project_select::PendingAutoOpen { path, skip_build: true })
+        jackdaw::project::read_last_project().map(|path| jackdaw::project_select::PendingAutoOpen {
+            path,
+            skip_build: true,
+        })
     } else {
         None
     };

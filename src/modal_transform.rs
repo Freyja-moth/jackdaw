@@ -91,7 +91,7 @@ impl Plugin for ModalTransformPlugin {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn modal_activate(
     keyboard: Res<ButtonInput<KeyCode>>,
     keybinds: Res<crate::keybinds::KeybindRegistry>,
@@ -172,7 +172,7 @@ fn modal_activate(
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn modal_constrain(
     keyboard: Res<ButtonInput<KeyCode>>,
     keybinds: Res<crate::keybinds::KeybindRegistry>,
@@ -207,7 +207,7 @@ fn modal_constrain(
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn modal_update(
     modal: Res<ModalTransformState>,
     mut transforms: Query<&mut Transform, With<Selected>>,
@@ -301,7 +301,6 @@ fn modal_update(
     }
 }
 
-#[allow(dead_code)]
 fn modal_grab(
     active: &ActiveModal,
     transform: &mut Transform,
@@ -383,7 +382,7 @@ fn modal_grab(
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn modal_confirm(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -418,7 +417,7 @@ fn modal_confirm(
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn modal_cancel(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -725,7 +724,7 @@ fn viewport_drag_finish(
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn modal_draw(
     modal: Res<ModalTransformState>,
     mut gizmos: Gizmos,
@@ -764,7 +763,6 @@ fn modal_draw(
     }
 }
 
-#[allow(dead_code)]
 fn axis_to_vec3(axis: GizmoAxis) -> Vec3 {
     match axis {
         GizmoAxis::X => Vec3::X,
@@ -773,7 +771,6 @@ fn axis_to_vec3(axis: GizmoAxis) -> Vec3 {
     }
 }
 
-#[allow(dead_code)]
 fn axis_color(axis: GizmoAxis) -> Color {
     match axis {
         GizmoAxis::X => default_style::AXIS_X,

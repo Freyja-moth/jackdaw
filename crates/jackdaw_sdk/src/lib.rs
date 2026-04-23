@@ -32,9 +32,8 @@
 /// referencing those unqualified will need to disambiguate; globbing
 /// both is still the best UX since authors rarely touch the overlap.
 pub mod prelude {
-    #[allow(ambiguous_glob_reexports)]
-    pub use bevy::prelude::*;
-    #[allow(ambiguous_glob_reexports)]
+    // using the bevy-defined exports over the BEI-defined ones.
+    pub use bevy::prelude::{Cancel, Press, Release, *};
     pub use jackdaw_api::prelude::*;
 }
 

@@ -196,7 +196,6 @@ pub fn populate_remote_proxy(world: &mut World) {
 
 /// Phase 2 (normal system): read the rebuild flag and build inspector displays using the
 /// shared `build_inspector_displays()` function, which requires normal system params.
-#[allow(clippy::too_many_arguments)]
 pub fn build_remote_inspector_displays(
     mut commands: Commands,
     components: &Components,

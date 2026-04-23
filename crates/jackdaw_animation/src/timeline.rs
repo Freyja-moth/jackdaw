@@ -173,7 +173,6 @@ pub fn timeline_panel() -> impl Bundle {
 /// visual rebuild and the Bevy-asset rebuild stay in lockstep — if
 /// the compile step had something to recompile this frame, the
 /// timeline widget will redraw on the same frame.
-#[allow(clippy::too_many_arguments)]
 pub fn mark_timeline_dirty_on_data_change(
     mut dirty: ResMut<TimelineDirty>,
     changed_clips: Query<(), Changed<Clip>>,
@@ -205,7 +204,6 @@ pub fn mark_timeline_dirty_on_data_change(
 /// Repopulates the timeline panel whenever the selection or any
 /// timeline data changed. Cheap — the widget is small and redrawn at
 /// 60 Hz at most.
-#[allow(clippy::too_many_arguments)]
 pub fn rebuild_timeline(
     mut commands: Commands,
     selected: Res<SelectedClip>,
@@ -567,7 +565,6 @@ fn spawn_header(
 /// Body row: fixed-width label column on the left, flex-grow timeline
 /// grid on the right. The timeline grid is one big pickable surface
 /// that receives scrub clicks.
-#[allow(clippy::too_many_arguments)]
 fn spawn_body(
     commands: &mut Commands,
     parent: Entity,
@@ -1060,7 +1057,6 @@ pub fn handle_add_keyframe_click(
 /// Observer: clicking on the scrubber bar seeks the playhead to the
 /// corresponding time, snapping to the nearest tick or keyframe
 /// unless Shift is held.
-#[allow(clippy::too_many_arguments)]
 pub fn handle_scrubber_click(
     mut event: On<Pointer<Click>>,
     scrubbers: Query<(&TimelineScrubber, &ComputedNode, &UiGlobalTransform)>,
@@ -1103,7 +1099,6 @@ pub fn handle_scrubber_click(
 
 /// Dragging across the scrubber emits seek messages so the target
 /// follows the playhead in real time. Snaps unless Shift is held.
-#[allow(clippy::too_many_arguments)]
 pub fn handle_scrubber_drag(
     mut event: On<Pointer<Drag>>,
     scrubbers: Query<(&TimelineScrubber, &ComputedNode, &UiGlobalTransform)>,
@@ -1148,7 +1143,6 @@ pub fn handle_scrubber_drag(
 /// the clip's keyframe set and honors the Shift modifier. Uses the
 /// idiomatic `any_pressed([ShiftLeft, ShiftRight])` pattern matching
 /// the rest of the editor's input handling (`src/snapping.rs` etc.).
-#[allow(clippy::too_many_arguments)]
 fn resolve_snap(
     raw_time: f32,
     duration: f32,

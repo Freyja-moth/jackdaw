@@ -88,7 +88,6 @@ pub(crate) fn add_component_displays(
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_inspector_displays(
     commands: &mut Commands,
     components: &Components,

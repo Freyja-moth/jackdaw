@@ -236,7 +236,7 @@ pub const TYPE_ENUM: Color = Color::srgb(0.72, 0.55, 0.82);
 // ---------------------------------------------------------------------------
 
 /// X axis color, red (#AB4051)
-#[allow(clippy::approx_constant)]
+#[expect(clippy::approx_constant)]
 pub const AXIS_X_COLOR: Color = Color::srgb(0.671, 0.251, 0.318);
 /// Y axis color, green (#5D8D0A)
 pub const AXIS_Y_COLOR: Color = Color::srgb(0.365, 0.553, 0.039);

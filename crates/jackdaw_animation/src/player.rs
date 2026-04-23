@@ -87,7 +87,6 @@ pub struct AnimationSeek(pub f32);
 /// target's Transform is freely editable. For glTF clips, only
 /// the `AnimationGraphHandle` is installed/stripped (Bevy's loader
 /// already placed the player and targets).
-#[allow(clippy::too_many_arguments)]
 pub fn auto_bind_player(
     selected: Res<SelectedClip>,
     engagement: Res<TimelineEngagement>,

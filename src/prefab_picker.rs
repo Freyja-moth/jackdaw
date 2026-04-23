@@ -28,7 +28,7 @@ struct PrefabPickerSearch;
 
 #[derive(Component)]
 struct PrefabPickerEntry {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     path: String,
     display_name: String,
 }

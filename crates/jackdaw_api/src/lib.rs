@@ -28,7 +28,7 @@
 // the FFI boundary. Mirrors how `bevy/dynamic_linking` pulls in
 // `bevy_dylib`.
 #[cfg(feature = "dynamic_linking")]
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use jackdaw_dylib as _;
 
 // --- Extension authoring surface ---

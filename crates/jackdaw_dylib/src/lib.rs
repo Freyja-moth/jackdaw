@@ -21,9 +21,6 @@
 // The `use` statements below exist purely to make sure the listed
 // crates' symbols end up inside the produced dylib. Rust's linker
 // drops unused transitive rlibs otherwise.
-#[allow(unused_imports)]
 use jackdaw_api_internal as _;
-#[allow(unused_imports)]
 use jackdaw_commands as _;
-#[allow(unused_imports)]
 use jackdaw_panels as _;

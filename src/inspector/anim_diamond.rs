@@ -382,7 +382,6 @@ fn recolor_button_icon(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn compute_diamond_state(
     btn: &AnimDiamondButton,
     children_query: &Query<&Children>,

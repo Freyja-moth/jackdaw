@@ -354,7 +354,6 @@ pub(super) struct BrushFacePropsContainer;
 
 /// Binding for a brush face UV field.
 #[derive(Component)]
-#[allow(dead_code)]
 pub(super) struct BrushFaceFieldBinding {
     pub(super) field: BrushFaceField,
 }

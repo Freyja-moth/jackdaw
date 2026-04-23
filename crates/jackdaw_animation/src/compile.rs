@@ -58,7 +58,6 @@ pub struct CompiledClip {
 /// we mutate the existing `AnimationClip` asset in place so the handle
 /// stays valid - otherwise the bound target's `AnimationGraphHandle`
 /// would go stale after every edit.
-#[allow(clippy::too_many_arguments)]
 pub fn compile_clips(
     changed: Query<
         Entity,
@@ -189,7 +188,6 @@ pub fn compile_clips(
 ///
 /// [`AnimationBlendGraph`]: crate::blend_graph::AnimationBlendGraph
 /// [`AnimationGraph`]: bevy::animation::graph::AnimationGraph
-#[allow(clippy::too_many_arguments)]
 pub fn compile_blend_graphs(
     blend_graphs: Query<(Entity, Option<&Children>), (With<Clip>, With<AnimationBlendGraph>)>,
     existing_compiled: Query<&CompiledClip>,
@@ -283,7 +281,6 @@ pub fn compile_blend_graphs(
 /// the query. If the Gltf asset isn't loaded yet, or the named
 /// animation can't be found, the clip is left un-compiled and the
 /// system retries next frame.
-#[allow(clippy::too_many_arguments)]
 pub fn compile_gltf_clips(
     uncompiled: Query<(Entity, &GltfClipRef), (With<Clip>, Without<CompiledClip>)>,
     asset_server: Res<AssetServer>,

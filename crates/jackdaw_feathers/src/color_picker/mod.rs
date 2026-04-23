@@ -153,14 +153,12 @@ impl ColorInputMode {
 #[derive(EntityEvent)]
 pub struct ColorPickerChangeEvent {
     pub entity: Entity,
-    #[allow(dead_code)]
     pub color: [f32; 4],
 }
 
 #[derive(EntityEvent)]
 pub struct ColorPickerCommitEvent {
     pub entity: Entity,
-    #[allow(dead_code)]
     pub color: [f32; 4],
 }
 
@@ -183,7 +181,6 @@ impl ColorPickerProps {
         self
     }
 
-    #[allow(dead_code)]
     pub fn inline(mut self) -> Self {
         self.inline = true;
         self

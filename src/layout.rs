@@ -2,7 +2,7 @@ use bevy::{feathers::theme::ThemedText, picking::hover::Hovered, prelude::*, ui_
 use jackdaw_api::prelude::*;
 use jackdaw_feathers::{
     icons::{Icon, IconFont},
-    menu_bar, panel_header, popover, separator, split_panel, status_bar,
+    menu_bar, popover, separator, split_panel, status_bar,
     text_edit::{self, TextEditProps},
     tokens,
     tooltip::Tooltip,
@@ -16,7 +16,6 @@ use crate::{
     gizmos::{GizmoMode, GizmoSpace},
     hierarchy::{HierarchyPanel, HierarchyShowAllButton, HierarchyTreeContainer},
     inspector::Inspector,
-    material_browser,
     remote::ConnectionManager,
     selection::Selection,
     viewport::SceneViewport,
@@ -1533,197 +1532,6 @@ pub fn inspector_components_content(icon_font: Handle<Font>) -> impl Bundle {
                     padding: UiRect::all(px(tokens::SPACING_SM)),
                     ..Default::default()
                 }
-            ),
-        ],
-    )
-}
-
-#[allow(dead_code)]
-fn entity_inspector_old(icon_font: Handle<Font>) -> impl Bundle {
-    (
-        Node {
-            height: percent(100),
-            flex_direction: FlexDirection::Column,
-            overflow: Overflow::clip(),
-            border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_LG)),
-            ..Default::default()
-        },
-        BackgroundColor(tokens::PANEL_BG),
-        children![
-            panel_header::panel_tab_bar(
-                &[
-                    panel_header::TabDef::new("Components", true),
-                    panel_header::TabDef::new("Materials", false),
-                    panel_header::TabDef::new("Resources", false),
-                    panel_header::TabDef::new("Systems", false),
-                ],
-                true,
-            ),
-            // Tab 0: Components
-            (
-                panel_header::PanelTabContent(0),
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    flex_grow: 1.0,
-                    min_height: px(0.0),
-                    display: Display::Flex,
-                    ..Default::default()
-                },
-                children![
-                    // Filter + Add Component (non-scrolling header area)
-                    (
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            width: percent(100),
-                            padding: UiRect::all(px(tokens::SPACING_SM)),
-                            row_gap: px(tokens::SPACING_XS),
-                            flex_shrink: 0.0,
-                            ..Default::default()
-                        },
-                        children![
-                            // Filter input
-                            (
-                                crate::inspector::InspectorSearch,
-                                text_edit::text_edit(
-                                    TextEditProps::default()
-                                        .with_placeholder("Filter...")
-                                        .allow_empty()
-                                ),
-                            ),
-                            // Add Component button, wired to component_picker observer.
-                            (
-                                crate::inspector::AddComponentButton,
-                                Interaction::default(),
-                                Node {
-                                    flex_direction: FlexDirection::Row,
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    width: percent(100),
-                                    height: px(tokens::ROW_HEIGHT),
-                                    column_gap: px(tokens::SPACING_SM),
-                                    border_radius: BorderRadius::all(px(tokens::BORDER_RADIUS_MD)),
-                                    flex_shrink: 0.0,
-                                    ..Default::default()
-                                },
-                                BackgroundColor(tokens::ELEVATED_BG),
-                                observe(
-                                    |hover: On<Pointer<Over>>,
-                                     mut bg: Query<&mut BackgroundColor>| {
-                                        if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
-                                            bg.0 = tokens::TOOLBAR_ACTIVE_BG;
-                                        }
-                                    },
-                                ),
-                                observe(
-                                    |out: On<Pointer<Out>>,
-                                     mut bg: Query<&mut BackgroundColor>| {
-                                        if let Ok(mut bg) = bg.get_mut(out.event_target()) {
-                                            bg.0 = tokens::ELEVATED_BG;
-                                        }
-                                    },
-                                ),
-                                children![
-                                    (
-                                        Text::new(String::from(Icon::PackagePlus.unicode())),
-                                        TextFont {
-                                            font: icon_font.clone(),
-                                            font_size: tokens::ICON_SM,
-                                            ..Default::default()
-                                        },
-                                        TextColor(tokens::TEXT_PRIMARY),
-                                    ),
-                                    (
-                                        Text::new("Add Component"),
-                                        TextFont {
-                                            font_size: tokens::TEXT_SIZE,
-                                            weight: FontWeight::MEDIUM,
-                                            ..Default::default()
-                                        },
-                                        TextColor(tokens::TEXT_PRIMARY),
-                                    ),
-                                ],
-                                observe(
-                                    |click: On<Pointer<Click>>, mut commands: Commands| {
-                                        commands.trigger(
-                                            jackdaw_feathers::button::ButtonClickEvent {
-                                                entity: click.event_target(),
-                                            },
-                                        );
-                                    },
-                                ),
-                            ),
-                        ],
-                    ),
-                    // Scrollable component list
-                    (
-                        Inspector,
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: px(tokens::SPACING_SM),
-                            overflow: Overflow::scroll_y(),
-                            flex_grow: 1.0,
-                            min_height: px(0.0),
-                            padding: UiRect::all(px(tokens::SPACING_SM)),
-                            ..Default::default()
-                        }
-                    ),
-                ],
-            ),
-            // Tab 1: Materials browser (wrapped so PanelTabContent controls visibility)
-            (
-                panel_header::PanelTabContent(1),
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    flex_grow: 1.0,
-                    min_height: px(0.0),
-                    display: Display::None,
-                    ..Default::default()
-                },
-                children![material_browser::material_browser_panel(icon_font)],
-            ),
-            // Tab 2: Resources placeholder
-            (
-                panel_header::PanelTabContent(2),
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    flex_grow: 1.0,
-                    min_height: px(0.0),
-                    padding: UiRect::all(px(tokens::SPACING_MD)),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..Default::default()
-                },
-                children![(
-                    Text::new("Resources"),
-                    TextFont {
-                        font_size: tokens::FONT_MD,
-                        ..Default::default()
-                    },
-                    TextColor(tokens::TEXT_SECONDARY),
-                )],
-            ),
-            // Tab 3: Systems placeholder
-            (
-                panel_header::PanelTabContent(3),
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    flex_grow: 1.0,
-                    min_height: px(0.0),
-                    padding: UiRect::all(px(tokens::SPACING_MD)),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..Default::default()
-                },
-                children![(
-                    Text::new("Systems"),
-                    TextFont {
-                        font_size: tokens::FONT_MD,
-                        ..Default::default()
-                    },
-                    TextColor(tokens::TEXT_SECONDARY),
-                )],
             ),
         ],
     )

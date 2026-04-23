@@ -188,7 +188,7 @@ macro_rules! __jackdaw_emit_reflect_register_symbol {
         // Suppress `unexpected_cfgs` for crates that don't ship the
         // build.rs. rustc's lint otherwise fires because it doesn't
         // know the cfg name.
-        #[allow(non_snake_case, unexpected_cfgs)]
+        #[expect(non_snake_case, unexpected_cfgs)]
         mod __jackdaw_generated_reflect {
             #[cfg(jackdaw_build_has_generated_reflect)]
             include!(concat!(env!("OUT_DIR"), "/__jackdaw_reflect_types.rs"));

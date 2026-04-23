@@ -710,7 +710,6 @@ fn on_clip_name_commit(
 /// them with `ToolbarTooltip` so the existing tooltip system picks
 /// them up on hover. Runs every frame but short-circuits via
 /// `Added<T>` filters, so it only fires once per button spawn.
-#[allow(clippy::type_complexity)]
 fn decorate_timeline_tooltips(
     play: Query<Entity, Added<jackdaw_animation::TimelinePlayButton>>,
     pause: Query<Entity, Added<jackdaw_animation::TimelinePauseButton>>,

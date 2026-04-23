@@ -1656,7 +1656,9 @@ pub(crate) fn clear_scene_entities(world: &mut World) {
         .entities
         .clear();
 
-    crate::hierarchy::clear_all_tree_rows(world);
+    if let Err(err) = world.run_system_cached(crate::hierarchy::clear_all_tree_rows) {
+        error!("Failed to clear tree rows: {err}");
+    }
 
     // Clear undo/redo stacks; they hold entity references that become
     // stale when the scene is dropped. Callers who want to preserve
@@ -1804,7 +1806,9 @@ pub fn apply_ast_to_world(world: &mut World, ast: &jackdaw_jsn::SceneJsnAst) {
         .resource_mut::<crate::selection::Selection>()
         .entities
         .clear();
-    crate::hierarchy::clear_all_tree_rows(world);
+    if let Err(err) = world.run_system_cached(crate::hierarchy::clear_all_tree_rows) {
+        error!("Failed to clear tree rows: {err}");
+    }
 
     despawn_scene_entities(world);
 

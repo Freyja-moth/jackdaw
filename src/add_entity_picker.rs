@@ -124,11 +124,11 @@ pub fn collect_add_menu_items(world: &mut World) -> Vec<AddMenuItem> {
 
 /// Open the Add Entity picker as a centered blocking dialog. Styled
 /// to match the Add Component dialog. Toggles off if already open.
-pub fn open_add_entity_picker(world: &mut World) {
-    let existing: Vec<Entity> = world
-        .query_filtered::<Entity, With<AddEntityPicker>>()
-        .iter(world)
-        .collect();
+pub fn open_add_entity_picker(
+    world: &mut World,
+    entity_pickers: &mut QueryState<Entity, With<AddEntityPicker>>,
+) {
+    let existing: Vec<Entity> = entity_pickers.iter(world).collect();
     if !existing.is_empty() {
         for e in existing {
             if let Ok(ec) = world.get_entity_mut(e) {
@@ -322,17 +322,15 @@ pub fn open_add_entity_picker(world: &mut World) {
                             commands.trigger(jackdaw_widgets::menu_bar::MenuAction {
                                 action: action.clone(),
                             });
-                            commands.queue(|world: &mut World| {
-                                let pickers: Vec<Entity> = world
-                                    .query_filtered::<Entity, With<AddEntityPicker>>()
-                                    .iter(world)
-                                    .collect();
-                                for picker in pickers {
-                                    if let Ok(ec) = world.get_entity_mut(picker) {
-                                        ec.despawn();
-                                    }
+                            fn despawn_pickers(
+                                mut commands: Commands,
+                                pickers: Query<Entity, With<AddEntityPicker>>,
+                            ) {
+                                for picker in &pickers {
+                                    commands.entity(picker).try_despawn();
                                 }
-                            });
+                            }
+                            commands.run_system_cached(despawn_pickers);
                         }
                     }),
                     observe(

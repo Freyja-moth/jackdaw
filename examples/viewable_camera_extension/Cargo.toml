@@ -10,3 +10,6 @@ path = "src/lib.rs"
 bevy.workspace = true
 bevy_enhanced_input.workspace = true
 jackdaw_api.workspace = true
+
+[lints]
+workspace = true

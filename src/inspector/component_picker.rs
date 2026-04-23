@@ -1,5 +1,4 @@
 use crate::EditorEntity;
-use crate::commands::EditorCommand;
 use crate::selection::{Selected, Selection};
 use std::any::TypeId;
 use std::collections::{BTreeMap, HashSet};
@@ -337,14 +336,21 @@ pub(crate) fn on_add_component_button_click(
                         move |mut click: On<Pointer<Click>>, mut commands: Commands| {
                             click.propagate(false); // Don't let click through to backdrop
                             let tp = type_path_full.clone();
-                            commands.queue(move |world: &mut World| {
-                                let cmd = crate::commands::AddComponent::new(
-                                    source_entity,
-                                    type_id,
-                                    component_id,
-                                    tp,
-                                );
-                                let mut cmd = Box::new(cmd);
+                            let cmd = crate::commands::AddComponent::new(
+                                source_entity,
+                                type_id,
+                                component_id,
+                                tp,
+                            );
+                            let cmd = Box::new(cmd);
+                            fn remove_pickers(
+                                In((source_entity, mut cmd)): In<(
+                                    Entity,
+                                    Box<dyn crate::commands::EditorCommand>,
+                                )>,
+                                world: &mut World,
+                                pickers: &mut QueryState<Entity, With<ComponentPicker>>,
+                            ) {
                                 cmd.execute(world);
                                 let mut history =
                                     world.resource_mut::<crate::commands::CommandHistory>();
@@ -354,16 +360,14 @@ pub(crate) fn on_add_component_button_click(
                                 world.entity_mut(source_entity).insert(InspectorDirty);
 
                                 // Close the picker dialog
-                                let pickers: Vec<Entity> = world
-                                    .query_filtered::<Entity, With<ComponentPicker>>()
-                                    .iter(world)
-                                    .collect();
+                                let pickers: Vec<Entity> = pickers.iter(world).collect();
                                 for picker in pickers {
                                     if let Ok(ec) = world.get_entity_mut(picker) {
                                         ec.despawn();
                                     }
                                 }
-                            });
+                            }
+                            commands.run_system_cached_with(remove_pickers, (source_entity, cmd))
                         }
                     }),
                     observe(

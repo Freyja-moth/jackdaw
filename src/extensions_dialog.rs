@@ -1,6 +1,8 @@
 //! File > Extensions dialog. Toggles compiled-in extensions at runtime
 //! and persists the current state to `extensions.json`.
 
+use std::path::PathBuf;
+
 use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, futures_lite::future},
@@ -360,7 +362,9 @@ fn poll_install_task(
                 // name was already loaded, it runs the prior
                 // teardown first and then calls the new build.
                 // No restart needed.
-                let _ = handle_install(world, src);
+                if let Err(err) = world.run_system_cached_with(handle_install, src) {
+                    error!("Failed to install extension: {err}")
+                }
             });
         }
         None => {
@@ -399,12 +403,17 @@ pub fn handle_install_from_path(
     world: &mut World,
     src: std::path::PathBuf,
 ) -> Result<jackdaw_loader::LoadedKind, jackdaw_loader::LoadError> {
-    handle_install(world, src)
+    world
+        .run_system_cached_with(handle_install, src)
+        .map_err(BevyError::from)
+        .map_err(jackdaw_loader::LoadError::from)
+        .flatten()
 }
 
 fn handle_install(
+    In(src): In<PathBuf>,
     world: &mut World,
-    src: std::path::PathBuf,
+    extension_dialogs: &mut QueryState<Entity, With<ExtensionsDialogContent>>,
 ) -> Result<jackdaw_loader::LoadedKind, jackdaw_loader::LoadError> {
     let target = classify_for_install(&src);
     let dest = match install_picked_file(&src, target) {
@@ -446,8 +455,7 @@ fn handle_install(
 
     // Despawn the existing list so `populate_extensions_dialog`
     // rebuilds it from the now-updated catalog.
-    let mut q = world.query_filtered::<Entity, With<ExtensionsDialogContent>>();
-    let targets: Vec<Entity> = q.iter(world).collect();
+    let targets: Vec<Entity> = extension_dialogs.iter(world).collect();
     for entity in targets {
         if let Ok(ec) = world.get_entity_mut(entity) {
             ec.despawn();

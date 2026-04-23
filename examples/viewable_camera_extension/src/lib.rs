@@ -92,7 +92,10 @@ struct CameraPreviewState {
 fn place_viewable_camera(_: In<OperatorParameters>, world: &mut World) -> OperatorResult {
     // Match the editor camera's transform so "look through" feels
     // natural on the first toggle.
-    let spawn_transform = find_editor_camera(world)
+    let spawn_transform = world
+        .run_system_cached(find_editor_camera)
+        .ok()
+        .flatten()
         .and_then(|e| world.get::<Transform>(e).copied())
         .unwrap_or_default();
 
@@ -137,7 +140,7 @@ fn toggle_preview(_: In<OperatorParameters>, world: &mut World) -> OperatorResul
         restore_editor_camera(world);
         info!("Exited viewable-camera preview");
     } else {
-        let Some(target) = pick_preview_target(world) else {
+        let Ok(Some(target)) = world.run_system_cached(pick_preview_target) else {
             warn!("No viewable camera to preview; press F6 to place one first");
             return OperatorResult::Cancelled;
         };
@@ -151,12 +154,14 @@ fn toggle_preview(_: In<OperatorParameters>, world: &mut World) -> OperatorResul
 
 /// Find the active editor-viewport camera: an active `Camera3d` with an
 /// `Image` render target that isn't one of ours.
-fn find_editor_camera(world: &mut World) -> Option<Entity> {
-    let mut q = world.query_filtered::<
+fn find_editor_camera(
+    world: &mut World,
+    cameras: &mut QueryState<
         (Entity, &Camera, &RenderTarget),
         (With<Camera3d>, Without<ViewableCamera>),
-    >();
-    for (entity, camera, target) in q.iter(world) {
+    >,
+) -> Option<Entity> {
+    for (entity, camera, target) in cameras.iter(world) {
         if camera.is_active && matches!(target, RenderTarget::Image(_)) {
             return Some(entity);
         }
@@ -168,11 +173,11 @@ fn find_editor_camera(world: &mut World) -> Option<Entity> {
 /// exactly one, otherwise the first one found. A richer rule honouring
 /// the editor's `Selection` resource would require depending on the
 /// main jackdaw crate.
-fn pick_preview_target(world: &mut World) -> Option<Entity> {
-    let cams: Vec<Entity> = world
-        .query_filtered::<Entity, With<ViewableCamera>>()
-        .iter(world)
-        .collect();
+fn pick_preview_target(
+    world: &mut World,
+    cameras: &mut QueryState<Entity, With<ViewableCamera>>,
+) -> Option<Entity> {
+    let cams: Vec<Entity> = cameras.iter(world).collect();
     if cams.len() == 1 {
         return Some(cams[0]);
     }
@@ -180,7 +185,7 @@ fn pick_preview_target(world: &mut World) -> Option<Entity> {
 }
 
 fn enter_preview(world: &mut World, target: Entity) -> Result<(), &'static str> {
-    let Some(editor_cam) = find_editor_camera(world) else {
+    let Ok(Some(editor_cam)) = world.run_system_cached(find_editor_camera) else {
         return Err("couldn't find the editor viewport camera");
     };
     let render_target = world

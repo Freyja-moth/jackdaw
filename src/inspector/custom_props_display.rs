@@ -1,6 +1,7 @@
 use crate::commands::{CommandHistory, EditorCommand};
 use crate::custom_properties::{CustomProperties, PropertyValue, SetCustomProperties};
 
+use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
 use bevy::ui_widgets::observe;
 use jackdaw_feathers::combobox::{ComboBoxSelectedIndex, combobox_with_selected};
@@ -359,21 +360,23 @@ fn spawn_add_property_row(
         TextColor(tokens::TEXT_ACCENT),
         ChildOf(row),
         observe(move |_: On<Pointer<Click>>, mut commands: Commands| {
-            commands.queue(move |world: &mut World| {
-                add_custom_property_from_ui(world, source_entity);
-            });
+            commands.run_system_cached_with(add_custom_property_from_ui, source_entity)
         }),
     ));
 }
 
 /// Read the name input and type selector, then add a new property.
-fn add_custom_property_from_ui(world: &mut World, source_entity: Entity) {
+fn add_custom_property_from_ui(
+    In(source_entity): In<Entity>,
+    world: &mut World,
+    text_edit: &mut SystemState<Single<&TextEditValue, With<CustomPropertyNameInput>>>,
+    combo_box_index: &mut SystemState<
+        Single<&ComboBoxSelectedIndex, With<CustomPropertyTypeSelector>>,
+    >,
+) {
     // Read the name input value
     let name = {
-        let mut query = world.query_filtered::<&TextEditValue, With<CustomPropertyNameInput>>();
-        let Some(input) = query.iter(world).next() else {
-            return;
-        };
+        let input = *text_edit.get(world);
         let name = input.0.trim().to_string();
         if name.is_empty() {
             return;
@@ -383,11 +386,7 @@ fn add_custom_property_from_ui(world: &mut World, source_entity: Entity) {
 
     // Read the type selector
     let type_name = {
-        let mut query =
-            world.query_filtered::<&ComboBoxSelectedIndex, With<CustomPropertyTypeSelector>>();
-        let Some(index) = query.iter(world).next() else {
-            return;
-        };
+        let index = *combo_box_index.get(world);
         let all_types = PropertyValue::all_type_names();
         let idx = index.0.min(all_types.len().saturating_sub(1));
         all_types[idx].to_string()

@@ -252,6 +252,7 @@ pub enum LoadError {
     /// is surfaced through the same Result so call sites have a
     /// single error type to match on.
     InstallIo(String),
+    Other(BevyError),
 }
 
 impl LoadError {
@@ -292,6 +293,7 @@ impl std::fmt::Display for LoadError {
                 write!(f, "extension name is not valid UTF-8 or contains NUL")
             }
             Self::InstallIo(msg) => write!(f, "install io: {msg}"),
+            Self::Other(e) => write!(f, "other: {e}"),
         }
     }
 }
@@ -307,6 +309,12 @@ impl From<libloading::Error> for LoadError {
 impl From<CompatError> for LoadError {
     fn from(value: CompatError) -> Self {
         Self::Compat(value)
+    }
+}
+
+impl From<BevyError> for LoadError {
+    fn from(value: BevyError) -> Self {
+        Self::Other(value)
     }
 }
 

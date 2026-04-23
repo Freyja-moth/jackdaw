@@ -221,12 +221,13 @@ pub enum ExecutionContext {
     Invoke,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum CallOperatorError {
     UnknownId(Cow<'static, str>),
     ModalAlreadyActive(&'static str),
     NotAvailable,
     ExecuteFailed,
+    Other(BevyError),
 }
 
 impl std::fmt::Display for CallOperatorError {
@@ -238,7 +239,13 @@ impl std::fmt::Display for CallOperatorError {
             }
             Self::NotAvailable => f.write_str("operator's availability check failed"),
             Self::ExecuteFailed => f.write_str("operator's execute system failed"),
+            Self::Other(err) => write!(f, "operator execution failed: {err}"),
         }
+    }
+}
+impl From<BevyError> for CallOperatorError {
+    fn from(err: BevyError) -> Self {
+        Self::Other(err)
     }
 }
 
@@ -297,38 +304,37 @@ impl<'a> OperatorCallBuilder<'a, World> {
     /// `Ok(true)` if it's ready, `Ok(false)` if not, `Err` for unknown
     /// ids.
     pub fn is_available(self) -> Result<bool, CallOperatorError> {
-        let Some(op_entity) = self
-            .world_commands
-            .resource::<OperatorIndex>()
-            .by_id
-            .get(self.id.as_ref())
-            .copied()
-        else {
-            return Err(CallOperatorError::UnknownId(self.id));
-        };
-        let Some(op) = self
-            .world_commands
-            .get::<OperatorEntity>(op_entity)
-            .cloned()
-        else {
-            return Err(CallOperatorError::UnknownId(self.id));
-        };
-        if op.modal
-            && self
-                .world_commands
-                .query_filtered::<Entity, With<ActiveModalOperator>>()
-                .iter(self.world_commands)
-                .next()
-                .is_some()
-        {
-            return Err(CallOperatorError::ModalAlreadyActive(op.id));
+        fn is_available_inner(
+            In(id): In<Cow<'static, str>>,
+            world: &mut World,
+            active: &mut SystemState<ActiveModalQuery>,
+        ) -> Result<bool, CallOperatorError> {
+            let Some(op_entity) = world
+                .resource::<OperatorIndex>()
+                .by_id
+                .get(id.as_ref())
+                .copied()
+            else {
+                return Err(CallOperatorError::UnknownId(id));
+            };
+            let Some(op) = world.get::<OperatorEntity>(op_entity).cloned() else {
+                return Err(CallOperatorError::UnknownId(id));
+            };
+            if op.modal && active.get(world).is_modal_running() {
+                return Err(CallOperatorError::ModalAlreadyActive(op.id));
+            }
+            let Some(check) = op.availability_check else {
+                return Ok(true);
+            };
+            world
+                .run_system(check)
+                .map_err(|_| CallOperatorError::NotAvailable)
         }
-        let Some(check) = op.availability_check else {
-            return Ok(true);
-        };
         self.world_commands
-            .run_system(check)
-            .map_err(|_| CallOperatorError::NotAvailable)
+            .run_system_cached_with(is_available_inner, self.id.clone())
+            .map_err(BevyError::from)
+            .map_err(CallOperatorError::from)
+            .flatten()
     }
 
     /// Call an operator by id. The availability check runs before the

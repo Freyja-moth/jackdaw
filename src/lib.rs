@@ -444,7 +444,9 @@ fn rebuild_menu_if_dirty(world: &mut World) {
         return;
     }
     world.resource_mut::<MenuBarDirty>().0 = false;
-    populate_menu(world);
+    if let Err(err) = world.run_system_cached(populate_menu) {
+        error!("Failed to rebuild menu: {err:?}");
+    }
 }
 
 fn flag_menu_dirty_on_window_add(_: On<Add, RegisteredWindow>, mut dirty: ResMut<MenuBarDirty>) {
@@ -1804,22 +1806,19 @@ fn discover_gltf_clips(
     }
 }
 
-fn populate_menu(world: &mut World) {
-    let menu_bar_entity = world
-        .query_filtered::<Entity, With<jackdaw_feathers::menu_bar::MenuBarRoot>>()
-        .iter(world)
-        .next();
-    let Some(menu_bar_entity) = menu_bar_entity else {
-        return;
-    };
+fn populate_menu(
+    world: &mut World,
+    menu_bar_entity: &mut SystemState<
+        Single<Entity, With<jackdaw_feathers::menu_bar::MenuBarRoot>>,
+    >,
+    items: &mut QueryState<Entity, With<jackdaw_widgets::menu_bar::MenuBarItem>>,
+) {
+    let menu_bar_entity = *menu_bar_entity.get(world);
 
     // Despawn existing menu-bar items before re-populating. Idempotent on
     // first call (nothing to remove), necessary for rebuilds when the
     // window registry changes (extensions toggled on/off).
-    let existing: Vec<Entity> = world
-        .query_filtered::<Entity, With<jackdaw_widgets::menu_bar::MenuBarItem>>()
-        .iter(world)
-        .collect();
+    let existing: Vec<Entity> = items.iter(world).collect();
     for entity in existing {
         if let Ok(ec) = world.get_entity_mut(entity) {
             ec.despawn();

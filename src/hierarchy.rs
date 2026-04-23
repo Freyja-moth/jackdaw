@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use bevy::{input_focus::InputFocus, prelude::*, ui::ui_transform::UiGlobalTransform};
+use bevy::{
+    ecs::system::SystemState, input_focus::InputFocus, prelude::*,
+    ui::ui_transform::UiGlobalTransform,
+};
 use bevy_monitors::prelude::{Mutation, NotifyChanged};
 use jackdaw_api::prelude::*;
 use jackdaw_feathers::{
@@ -174,51 +177,53 @@ fn rebuild_hierarchy_on_container_added(
     }
 }
 
-fn rebuild_hierarchy(world: &mut World) {
-    let container = world
-        .query_filtered::<Entity, With<HierarchyTreeContainer>>()
-        .iter(world)
-        .next();
+fn rebuild_hierarchy(world: &mut World) -> Result {
+    fn rebuild_hierarchy_inner(
+        world: &mut World,
+        container: &mut SystemState<Single<Entity, With<HierarchyTreeContainer>>>,
+        roots: &mut QueryState<
+            Entity,
+            (
+                With<Transform>,
+                Without<EditorEntity>,
+                Without<EditorHidden>,
+                Without<ChildOf>,
+            ),
+        >,
+    ) {
+        let container = *container.get(world);
 
-    let Some(container) = container else {
-        return;
-    };
+        // Collect all root scene entities (Transform, no ChildOf, no editor markers)
+        let roots: Vec<Entity> = roots.iter(world).collect();
 
-    // Collect all root scene entities (Transform, no ChildOf, no editor markers)
-    let roots: Vec<Entity> = world
-        .query_filtered::<Entity, (
-            With<Transform>,
-            Without<EditorEntity>,
-            Without<EditorHidden>,
-            Without<ChildOf>,
-        )>()
-        .iter(world)
-        .collect();
+        let show_all = world.resource::<HierarchyShowAll>().0;
 
-    let show_all = world.resource::<HierarchyShowAll>().0;
+        // Sort by (category, name) for consistent ordering
+        let mut root_data: Vec<(Entity, EntityCategory, String)> = roots
+            .into_iter()
+            .filter(|&e| !world.resource::<TreeIndex>().contains(e))
+            .filter(|&e| show_all || world.get::<Name>(e).is_some())
+            .map(|e| {
+                let category = classify_entity(world, e);
+                let name = world
+                    .get::<Name>(e)
+                    .map(|n| n.as_str().to_string())
+                    .unwrap_or_else(|| format!("Entity {e}"));
+                (e, category, name)
+            })
+            .collect();
 
-    // Sort by (category, name) for consistent ordering
-    let mut root_data: Vec<(Entity, EntityCategory, String)> = roots
-        .into_iter()
-        .filter(|&e| !world.resource::<TreeIndex>().contains(e))
-        .filter(|&e| show_all || world.get::<Name>(e).is_some())
-        .map(|e| {
-            let category = classify_entity(world, e);
-            let name = world
-                .get::<Name>(e)
-                .map(|n| n.as_str().to_string())
-                .unwrap_or_else(|| format!("Entity {e}"));
-            (e, category, name)
-        })
-        .collect();
+        root_data.sort_by(|(_, cat_a, name_a), (_, cat_b, name_b)| {
+            cat_a.cmp(cat_b).then_with(|| name_a.cmp(name_b))
+        });
 
-    root_data.sort_by(|(_, cat_a, name_a), (_, cat_b, name_b)| {
-        cat_a.cmp(cat_b).then_with(|| name_a.cmp(name_b))
-    });
-
-    for (entity, _category, _name) in root_data {
-        spawn_single_tree_row(world, entity, container);
+        for (entity, _category, _name) in root_data {
+            spawn_single_tree_row(world, entity, container);
+        }
     }
+    world
+        .run_system_cached(rebuild_hierarchy_inner)
+        .map_err(BevyError::from)
 }
 
 /// When a new entity gets Transform and has no parent, create a root tree row.
@@ -1463,21 +1468,20 @@ fn update_show_all_button_appearance(
 fn on_show_all_changed(show_all: Res<HierarchyShowAll>, mut commands: Commands) {
     if show_all.is_changed() && !show_all.is_added() {
         commands.queue(|world: &mut World| {
-            clear_all_tree_rows(world);
-            rebuild_hierarchy(world);
+            if let Err(err) = world.run_system_cached(clear_all_tree_rows) {
+                error!("Failed to clear tree rows: {err}");
+            }
+            rebuild_hierarchy(world)
         });
     }
 }
 
 /// Despawn all tree rows and clear the TreeIndex.
-pub fn clear_all_tree_rows(world: &mut World) {
-    let container = world
-        .query_filtered::<Entity, With<HierarchyTreeContainer>>()
-        .iter(world)
-        .next();
-    let Some(container) = container else {
-        return;
-    };
+pub fn clear_all_tree_rows(
+    world: &mut World,
+    container: &mut SystemState<Single<Entity, With<HierarchyTreeContainer>>>,
+) {
+    let container = *container.get(world);
 
     // Collect tree row children of the container
     let tree_rows: Vec<Entity> = world

@@ -1,6 +1,10 @@
 use std::path::Path;
 
-use bevy::{ecs::system::SystemState, gltf::GltfAssetLabel, prelude::*};
+use bevy::{
+    ecs::system::{SystemParam, SystemState},
+    gltf::GltfAssetLabel,
+    prelude::*,
+};
 
 use crate::{
     EditorEntity,
@@ -467,11 +471,14 @@ fn camera_snapped_rotation_axes(gt: &GlobalTransform) -> (Vec3, Vec3, Vec3) {
     (yaw_axis, roll_axis, pitch_axis)
 }
 
-pub fn handle_entity_keys(world: &mut World) {
+pub fn handle_entity_keys(
+    world: &mut World,
+    cameras: &mut QueryState<&GlobalTransform, With<crate::viewport::MainViewportCamera>>,
+) -> Result {
     // Don't process entity keys when a text input is focused
     let has_input_focus = world.resource::<InputFocus>().0.is_some();
     if has_input_focus {
-        return;
+        return Ok(());
     }
 
     // Don't process entity keys during modal transform operations or draw mode
@@ -480,14 +487,14 @@ pub fn handle_entity_keys(world: &mut World) {
         .active
         .is_some();
     if modal_active {
-        return;
+        return Ok(());
     }
     let draw_active = world
         .resource::<crate::draw_brush::DrawBrushState>()
         .active
         .is_some();
     if draw_active {
-        return;
+        return Ok(());
     }
 
     // Don't process entity ops during brush edit mode (Delete etc. handled by brush systems)
@@ -496,7 +503,7 @@ pub fn handle_entity_keys(world: &mut World) {
         crate::brush::EditMode::Object
     );
     if in_brush_edit {
-        return;
+        return Ok(());
     }
 
     use crate::keybinds::EditorAction;
@@ -550,9 +557,9 @@ pub fn handle_entity_keys(world: &mut World) {
     } else if reset_scale {
         reset_transform_selected(world, TransformReset::Scale);
     } else if unhide_all {
-        unhide_all_entities(world);
+        world.run_system_cached(unhide_all_entities)?
     } else if hide_unselected {
-        hide_all_entities(world);
+        world.run_system_cached(hide_all_entities)?
     } else if do_hide_selected {
         hide_selected(world);
     } else if any_rotation {
@@ -560,9 +567,7 @@ pub fn handle_entity_keys(world: &mut World) {
         // so rotations always produce axis-aligned results while still feeling
         // intuitive from the current viewpoint.
         let (yaw_axis, roll_axis, pitch_axis) = {
-            let mut cam_query = world
-                .query_filtered::<&GlobalTransform, With<crate::viewport::MainViewportCamera>>();
-            cam_query
+            cameras
                 .iter(world)
                 .next()
                 .map(|gt| camera_snapped_rotation_axes(gt))
@@ -610,6 +615,7 @@ pub fn handle_entity_keys(world: &mut World) {
         }
         nudge_selected(world, offset);
     }
+    Ok(())
 }
 
 enum TransformReset {
@@ -913,18 +919,25 @@ fn hide_selected(world: &mut World) {
     }
 }
 
-fn unhide_all_entities(world: &mut World) {
+// FIXME: this breaks down whenever an extension uses `Name`
+#[derive(SystemParam, Deref, DerefMut)]
+struct SceneEntities<'w, 's> {
+    query: Query<
+        'w,
+        's,
+        (Entity, &'static Visibility),
+        (With<Name>, Without<EditorEntity>, Without<Node>),
+    >,
+}
+
+fn unhide_all_entities(world: &mut World, scene_entities: &mut SystemState<SceneEntities>) {
     let mut cmds: Vec<Box<dyn EditorCommand>> = Vec::new();
 
     // Only unhide top-level scene entities (with Name), matching hide_unselected logic.
     let hidden: Vec<Entity> = {
-        let mut query = world.query_filtered::<(Entity, &Visibility), (
-            With<Name>,
-            Without<EditorEntity>,
-            Without<Node>,
-        )>();
-        query
-            .iter(world)
+        scene_entities
+            .get(world)
+            .iter()
             .filter(|(_, vis)| **vis == Visibility::Hidden)
             .map(|(e, _)| e)
             .collect()
@@ -953,18 +966,14 @@ fn unhide_all_entities(world: &mut World) {
     }
 }
 
-fn hide_all_entities(world: &mut World) {
+fn hide_all_entities(world: &mut World, scene_entities: &mut SystemState<SceneEntities>) {
     let mut cmds: Vec<Box<dyn EditorCommand>> = Vec::new();
 
     // Hide all top-level scene entities (same filter as H, applied to everything).
     let to_hide: Vec<(Entity, Visibility)> = {
-        let mut query = world.query_filtered::<(Entity, &Visibility), (
-            With<Name>,
-            Without<EditorEntity>,
-            Without<Node>,
-        )>();
-        query
-            .iter(world)
+        scene_entities
+            .get(world)
+            .iter()
             .filter(|(_, vis)| **vis != Visibility::Hidden)
             .map(|(e, vis)| (e, *vis))
             .collect()

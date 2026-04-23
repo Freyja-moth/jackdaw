@@ -59,7 +59,10 @@ pub struct WorkspaceListSnapshot {
 /// in-place via `handle_workspace_rename_commit`; per-tab `tree`
 /// mutations don't touch the strip at all. This avoids despawning the
 /// X / rename input out from under their deferred init systems.
-pub fn populate_workspace_tabs(world: &mut World) {
+pub fn populate_workspace_tabs(
+    world: &mut World,
+    workspace_strips: &mut QueryState<Entity, (With<WorkspaceTabStrip>, Without<WorkspaceTab>)>,
+) {
     let current_ids: Vec<String> = world
         .resource::<WorkspaceRegistry>()
         .workspaces
@@ -71,9 +74,7 @@ pub fn populate_workspace_tabs(world: &mut World) {
 
     let mut strips: Vec<Entity> = Vec::new();
     {
-        let mut query =
-            world.query_filtered::<Entity, (With<WorkspaceTabStrip>, Without<WorkspaceTab>)>();
-        for entity in query.iter(world) {
+        for entity in workspace_strips.iter(world) {
             let is_empty = world
                 .entity(entity)
                 .get::<Children>()

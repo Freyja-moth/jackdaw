@@ -113,9 +113,11 @@ pub enum JackdawLoadError {
     Parse(String),
 }
 
-fn spawn_loaded_scenes(world: &mut World) {
-    let mut query = world.query_filtered::<(Entity, &JackdawSceneRoot), Without<SceneSpawned>>();
-    let to_spawn: Vec<(Entity, Handle<JackdawScene>)> = query
+fn spawn_loaded_scenes(
+    world: &mut World,
+    scene_roots: &mut QueryState<(Entity, &JackdawSceneRoot), Without<SceneSpawned>>,
+) {
+    let to_spawn: Vec<(Entity, Handle<JackdawScene>)> = scene_roots
         .iter(world)
         .map(|(e, root)| (e, root.0.clone()))
         .collect();

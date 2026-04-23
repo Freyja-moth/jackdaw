@@ -18,17 +18,59 @@ use bevy::log::{info, warn};
 
 use crate::sdk_paths::SdkPaths;
 
-/// Default template for **File → New Project → Extension**.
-/// Overridable via the `JACKDAW_TEMPLATE_EXTENSION_URL` env var
-/// for dev / testing.
-pub const TEMPLATE_EXTENSION_URL: &str = "https://github.com/jbuehler23/jackdaw_template_extension";
+/// Default **static** extension template. Scaffolded projects
+/// compile plainly against `bevy` and don't need the SDK dylib.
+/// This is the recommended starting point while the dylib path
+/// stabilises.
+///
+/// Overridable via `JACKDAW_TEMPLATE_EXTENSION_STATIC_URL`.
+pub const TEMPLATE_EXTENSION_STATIC_URL: &str =
+    "https://github.com/jbuehler23/jackdaw_template_extension_static";
 
-/// Default template for **File → New Project → Game**.
-/// Overridable via the `JACKDAW_TEMPLATE_GAME_URL` env var.
-pub const TEMPLATE_GAME_URL: &str = "https://github.com/jbuehler23/jackdaw_template_game";
+/// Default **static** game template. See
+/// [`TEMPLATE_EXTENSION_STATIC_URL`] for rationale.
+///
+/// Overridable via `JACKDAW_TEMPLATE_GAME_STATIC_URL`.
+pub const TEMPLATE_GAME_STATIC_URL: &str =
+    "https://github.com/jbuehler23/jackdaw_template_game_static";
 
-/// Which template the user chose. `Custom` lets them paste any
-/// Bevy-CLI-compatible URL.
+/// Default **dylib** extension template. Produces a `cdylib` the
+/// editor can `dlopen` for hot-reload, but requires the editor be
+/// built with `--features dylib` so `libjackdaw_sdk` exists for
+/// the rustc wrapper to link against.
+///
+/// Overridable via `JACKDAW_TEMPLATE_EXTENSION_DYLIB_URL` (with
+/// a fallback to the legacy `JACKDAW_TEMPLATE_EXTENSION_URL`
+/// for backward compatibility).
+pub const TEMPLATE_EXTENSION_DYLIB_URL: &str =
+    "https://github.com/jbuehler23/jackdaw_template_extension";
+
+/// Default **dylib** game template. See
+/// [`TEMPLATE_EXTENSION_DYLIB_URL`] for rationale.
+///
+/// Overridable via `JACKDAW_TEMPLATE_GAME_DYLIB_URL` (with a
+/// fallback to the legacy `JACKDAW_TEMPLATE_GAME_URL`).
+pub const TEMPLATE_GAME_DYLIB_URL: &str =
+    "https://github.com/jbuehler23/jackdaw_template_game";
+
+/// Whether the scaffolded project should use the static or
+/// dylib-based template variant. See the URL constants above
+/// for the operational difference.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TemplateLinkage {
+    /// Plain `rlib`/`bin`-only crate. Builds against `bevy` with
+    /// no SDK dylib dependency. Recommended starting point.
+    #[default]
+    Static,
+    /// `cdylib` crate linked against `libjackdaw_sdk` so the
+    /// editor can hot-load it. Requires editor built with
+    /// `--features dylib`.
+    Dylib,
+}
+
+/// Which template preset the user opened the scaffolder with.
+/// `Custom` bypasses the preset→URL mapping and lets the user
+/// paste any Bevy-CLI-compatible URL.
 #[derive(Clone, Debug)]
 pub enum TemplatePreset {
     Extension,
@@ -37,16 +79,33 @@ pub enum TemplatePreset {
 }
 
 impl TemplatePreset {
-    /// Resolve the preset to a concrete URL, consulting env vars
-    /// for the built-in presets.
-    pub fn url(&self) -> String {
+    /// Resolve the preset to a concrete URL for the given linkage,
+    /// consulting env vars for the built-in presets. `Custom` ignores
+    /// `linkage` (the URL is whatever the user pasted).
+    pub fn url(&self, linkage: TemplateLinkage) -> String {
         match self {
-            Self::Extension => std::env::var("JACKDAW_TEMPLATE_EXTENSION_URL")
-                .unwrap_or_else(|_| TEMPLATE_EXTENSION_URL.to_string()),
-            Self::Game => std::env::var("JACKDAW_TEMPLATE_GAME_URL")
-                .unwrap_or_else(|_| TEMPLATE_GAME_URL.to_string()),
+            Self::Extension => match linkage {
+                TemplateLinkage::Static => std::env::var("JACKDAW_TEMPLATE_EXTENSION_STATIC_URL")
+                    .unwrap_or_else(|_| TEMPLATE_EXTENSION_STATIC_URL.to_string()),
+                TemplateLinkage::Dylib => std::env::var("JACKDAW_TEMPLATE_EXTENSION_DYLIB_URL")
+                    .or_else(|_| std::env::var("JACKDAW_TEMPLATE_EXTENSION_URL"))
+                    .unwrap_or_else(|_| TEMPLATE_EXTENSION_DYLIB_URL.to_string()),
+            },
+            Self::Game => match linkage {
+                TemplateLinkage::Static => std::env::var("JACKDAW_TEMPLATE_GAME_STATIC_URL")
+                    .unwrap_or_else(|_| TEMPLATE_GAME_STATIC_URL.to_string()),
+                TemplateLinkage::Dylib => std::env::var("JACKDAW_TEMPLATE_GAME_DYLIB_URL")
+                    .or_else(|_| std::env::var("JACKDAW_TEMPLATE_GAME_URL"))
+                    .unwrap_or_else(|_| TEMPLATE_GAME_DYLIB_URL.to_string()),
+            },
             Self::Custom(url) => url.clone(),
         }
+    }
+
+    /// `true` for the two presets that have Static/Dylib variants
+    /// (so the UI knows whether to show the linkage selector).
+    pub fn supports_linkage_selector(&self) -> bool {
+        matches!(self, Self::Extension | Self::Game)
     }
 }
 
@@ -96,12 +155,29 @@ impl std::error::Error for ScaffoldError {}
 /// Run `bevy new -t <template_url> --yes <name>` in `location`.
 ///
 /// Returns the absolute path to the newly-scaffolded project root
-/// on success. Blocks until `bevy` exits — call from a worker
+/// on success. Blocks until `bevy` exits; call from a worker
 /// thread or a task pool.
+///
+/// `linkage` controls whether the scaffolded project gets the
+/// rustc-wrapper-based `.cargo/config.toml`:
+///
+/// - [`TemplateLinkage::Dylib`]: write the wrapper config so
+///   cargo builds through `jackdaw-rustc-wrapper`, which rewrites
+///   `--extern bevy` at `libjackdaw_sdk` to keep TypeIds
+///   matching the editor.
+/// - [`TemplateLinkage::Static`]: skip the wrapper config. The
+///   static templates depend on `jackdaw` directly as a git
+///   dependency and build with plain `cargo`, no wrapper, no
+///   SDK dylib. Writing the wrapper config here would force
+///   rustc into `-C prefer-dynamic` and rewrite `bevy` to an
+///   SDK copy whose hash doesn't match the one cargo compiled
+///   for the static project, producing
+///   `can't find crate for jackdaw` at build time.
 pub fn scaffold_project(
     name: &str,
     location: &Path,
     template_url: &str,
+    linkage: TemplateLinkage,
 ) -> Result<PathBuf, ScaffoldError> {
     if name.is_empty()
         || !name
@@ -141,7 +217,9 @@ pub fn scaffold_project(
 
     // `bevy new` is consistent about where it drops the project:
     // `<location>/<name>/`. Trust that and return.
-    write_cargo_config(&project_path);
+    if matches!(linkage, TemplateLinkage::Dylib) {
+        write_cargo_config(&project_path);
+    }
     Ok(project_path)
 }
 

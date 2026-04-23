@@ -11,25 +11,26 @@ categories = ["game-development", "graphics"]
 exclude = ["assets/environment_maps/"]
 
 [features]
-default = ["dev"]
+default = []
 hot-reload = ["dep:bevy_simple_subsecond_system"]
-# Registers the in-tree example extensions (`sample`, `viewable_camera`)
-# with the prebuilt binary. On by default while the API is still being
-# shaken out; release distributions should be built with
-# `--no-default-features` to ship without them.
-dev = ["dep:sample_extension", "dep:viewable_camera_extension"]
-# Enable on the editor binary to load extension dylibs safely.
-# Pulls in Bevy's `dynamic_linking` plus Jackdaw's own
-# `bevy_dylib`-style facade so the editor and every loaded
-# extension share one compiled copy of every type that crosses the
-# boundary. Also pulls in `jackdaw_sdk` — the proxy dylib that
-# extensions link against via `--extern bevy=libjackdaw_sdk.so` —
-# which is gated here rather than being a hard dep because on
-# Windows MSVC its `.dll` form is right up against the 65,535 PE
-# export cap (see issue #183). Disabled by default: it forces
-# Bevy and jackdaw_api to rebuild as dylibs, which slows the
-# incremental dev loop and, on Windows, pushes the linker into
-# territory that may need further symbol-trimming work.
+# Opt-in dylib-based extension flow. Enables Bevy's
+# `dynamic_linking` plus Jackdaw's own `bevy_dylib`-style facade
+# so the editor and every loaded extension share one compiled
+# copy of every type that crosses the boundary, and pulls in
+# `jackdaw_sdk` — the proxy dylib that scaffolded extension
+# projects link against via `--extern bevy=libjackdaw_sdk.{so,dll,dylib}`.
+#
+# Off by default: the current stable path for scaffolded projects
+# is the static game/extension templates, which compile plainly
+# against `bevy` and don't need the SDK dylib. Opt in with
+# `--features dylib` when you want to exercise the hot-reloadable
+# dylib extension flow.
+#
+# Known Windows MSVC limitation: `jackdaw_sdk`'s proxy dylib
+# re-exports all of bevy + jackdaw_api, which on Windows is right
+# up against the 65,535 PE export cap (see issue #183 and
+# bevyengine/bevy#1110). Further symbol-trimming work is needed
+# before this is green on Windows.
 dylib = ["dep:jackdaw_sdk", "jackdaw_api/dynamic_linking"]
 
 [workspace]
@@ -74,8 +75,6 @@ jackdaw_loader.workspace = true
 # would otherwise blow past the 65,535 PE export cap. See issue #183.
 jackdaw_sdk = { workspace = true, optional = true }
 bevy_enhanced_input.workspace = true
-sample_extension = { path = "examples/sample_extension", optional = true }
-viewable_camera_extension = { path = "examples/viewable_camera_extension", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 avian3d.workspace = true

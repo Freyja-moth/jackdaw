@@ -15,7 +15,7 @@ use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::{
     AppState,
-    new_project::{ScaffoldError, TemplatePreset, scaffold_project},
+    new_project::{ScaffoldError, TemplateLinkage, TemplatePreset, scaffold_project},
     project::{self, ProjectRoot},
 };
 
@@ -119,12 +119,23 @@ struct NewProjectCreateButton;
 #[derive(Component)]
 struct NewProjectBrowseButton;
 
+/// One of the two segmented buttons that pick between the Static
+/// and Dylib template variants. The enum value is stored on the
+/// component so the click observer knows which linkage to apply
+/// without needing separate marker types per button.
+#[derive(Component, Clone, Copy)]
+struct NewProjectLinkageButton(TemplateLinkage);
+
 /// Drives the modal's async operations.
 #[derive(Resource, Default)]
 struct NewProjectState {
     /// Which preset the user opened the dialog with. `None` when
     /// the modal isn't open.
     preset: Option<TemplatePreset>,
+    /// Static vs dylib template choice. Defaults to Static (the
+    /// currently-stable path); only meaningful for the Extension
+    /// and Game presets — Custom pastes its own URL.
+    linkage: TemplateLinkage,
     /// Parent directory the new project will be placed under.
     /// Scaffolder produces `location/name/`.
     location: PathBuf,
@@ -738,6 +749,201 @@ fn spawn_new_project_button(
         });
 }
 
+/// Spawn one segmented button in the Static/Dylib linkage selector.
+///
+/// `initial` is the linkage that was active when the modal opened —
+/// used to draw the button in its selected visual state on first
+/// render. After the first click, the system polls
+/// [`NewProjectState::linkage`] each frame via
+/// [`refresh_linkage_buttons`] and repaints all buttons accordingly.
+fn spawn_linkage_button(
+    world: &mut World,
+    parent: Entity,
+    label: &str,
+    tooltip: &str,
+    linkage: TemplateLinkage,
+    initial: TemplateLinkage,
+    font: Handle<Font>,
+) {
+    let selected = linkage == initial;
+    let bg_color = if selected {
+        tokens::SELECTED_BG
+    } else {
+        tokens::TOOLBAR_BG
+    };
+    let border_color = if selected {
+        tokens::SELECTED_BORDER
+    } else {
+        tokens::BORDER_SUBTLE
+    };
+
+    let button = world
+        .spawn((
+            NewProjectLinkageButton(linkage),
+            Node {
+                padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(tokens::BORDER_RADIUS_MD)),
+                justify_content: JustifyContent::Center,
+                ..Default::default()
+            },
+            BackgroundColor(bg_color),
+            BorderColor::all(border_color),
+            children![(
+                Text::new(label.to_string()),
+                TextFont {
+                    font,
+                    font_size: tokens::FONT_MD,
+                    ..Default::default()
+                },
+                TextColor(tokens::TEXT_PRIMARY),
+            )],
+            jackdaw_feathers::tooltip::Tooltip(tooltip.to_string()),
+            ChildOf(parent),
+        ))
+        .id();
+
+    world
+        .entity_mut(button)
+        .observe(on_linkage_button_click)
+        .observe(
+            |hover: On<Pointer<Over>>,
+             buttons: Query<&NewProjectLinkageButton>,
+             state: Res<NewProjectState>,
+             mut bg: Query<&mut BackgroundColor>| {
+                // Only repaint the hover background when the button
+                // isn't already the selected one — otherwise we'd
+                // briefly lose the selected highlight on cursor-over.
+                let Ok(button) = buttons.get(hover.event_target()) else {
+                    return;
+                };
+                if button.0 == state.linkage {
+                    return;
+                }
+                if let Ok(mut bg) = bg.get_mut(hover.event_target()) {
+                    bg.0 = tokens::HOVER_BG;
+                }
+            },
+        )
+        .observe(
+            |out: On<Pointer<Out>>,
+             buttons: Query<&NewProjectLinkageButton>,
+             state: Res<NewProjectState>,
+             mut bg: Query<&mut BackgroundColor>| {
+                let Ok(button) = buttons.get(out.event_target()) else {
+                    return;
+                };
+                // Restore the idle colour only for non-selected
+                // buttons; the selected one keeps its highlight.
+                if button.0 == state.linkage {
+                    return;
+                }
+                if let Ok(mut bg) = bg.get_mut(out.event_target()) {
+                    bg.0 = tokens::TOOLBAR_BG;
+                }
+            },
+        );
+}
+
+/// Click handler for Static/Dylib segmented buttons. Updates
+/// `NewProjectState.linkage`, repaints the two buttons, and
+/// rewrites the Template URL input to the new preset URL so the
+/// user sees the change immediately. If the user has manually
+/// edited the URL to a custom value, this overwrites it — by
+/// design: toggling the linkage is a "reset to preset" action.
+fn on_linkage_button_click(
+    click: On<Pointer<Click>>,
+    buttons: Query<&NewProjectLinkageButton>,
+    mut commands: Commands,
+) {
+    let Ok(button) = buttons.get(click.event_target()) else {
+        return;
+    };
+    let linkage = button.0;
+    commands.queue(move |world: &mut World| {
+        // Update the canonical state.
+        world.resource_mut::<NewProjectState>().linkage = linkage;
+
+        // Repaint all linkage buttons to reflect the new selection.
+        let mut repaint: Vec<(Entity, bool)> = Vec::new();
+        {
+            let mut q = world.query::<(Entity, &NewProjectLinkageButton)>();
+            for (entity, btn) in q.iter(world) {
+                repaint.push((entity, btn.0 == linkage));
+            }
+        }
+        for (entity, is_selected) in repaint {
+            let bg_color = if is_selected {
+                tokens::SELECTED_BG
+            } else {
+                tokens::TOOLBAR_BG
+            };
+            let border_color = if is_selected {
+                tokens::SELECTED_BORDER
+            } else {
+                tokens::BORDER_SUBTLE
+            };
+            if let Ok(mut ec) = world.get_entity_mut(entity) {
+                ec.insert(BackgroundColor(bg_color));
+                ec.insert(BorderColor::all(border_color));
+            }
+        }
+
+        // Rewrite the Template URL input with the new preset URL
+        // for the active preset+linkage. If the preset is Custom
+        // (which doesn't render a linkage selector) we won't reach
+        // this path, but fall through as a no-op just in case.
+        let Some(preset) = world.resource::<NewProjectState>().preset.clone() else {
+            return;
+        };
+        let new_url = preset.url(linkage);
+        set_template_input_text(world, new_url);
+    });
+}
+
+/// Push a new value into the Template URL text input — finds the
+/// `NewProjectTemplateInput` outer, walks to the inner text-input
+/// entity, and queues a `TextInputQueue` update, the same way
+/// `refresh_name_field` syncs the Name field.
+fn set_template_input_text(world: &mut World, new_text: String) {
+    use jackdaw_feathers::text_edit::{TextInputQueue, set_text_input_value};
+
+    let mut q = world.query_filtered::<Entity, With<NewProjectTemplateInput>>();
+    let Some(outer) = q.iter(world).next() else {
+        return;
+    };
+    let Some((_wrapper, inner)) = find_text_edit_entities_for_template(world, outer) else {
+        return;
+    };
+    if let Some(mut queue) = world.get_mut::<TextInputQueue>(inner) {
+        set_text_input_value(&mut queue, new_text);
+    }
+}
+
+/// Walk from the outer Template-field entity to its inner
+/// `TextInputQueue`-bearing entity. Mirror of
+/// `inspector::find_text_edit_entities_local`.
+fn find_text_edit_entities_for_template(
+    world: &World,
+    outer: Entity,
+) -> Option<(Entity, Entity)> {
+    use jackdaw_feathers::text_edit::TextEditWrapper;
+    let children = world.get::<Children>(outer)?;
+    for child in children.iter() {
+        if let Some(wrapper) = world.get::<TextEditWrapper>(child) {
+            return Some((child, wrapper.0));
+        }
+        if let Some(grandchildren) = world.get::<Children>(child) {
+            for gc in grandchildren.iter() {
+                if let Some(wrapper) = world.get::<TextEditWrapper>(gc) {
+                    return Some((gc, wrapper.0));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Tear down any existing New Project modal. Idempotent.
 pub fn close_new_project_modal(world: &mut World) {
     let mut q = world.query_filtered::<Entity, With<NewProjectModalRoot>>();
@@ -749,6 +955,7 @@ pub fn close_new_project_modal(world: &mut World) {
     }
     let mut state = world.resource_mut::<NewProjectState>();
     state.preset = None;
+    state.linkage = TemplateLinkage::default();
     state.folder_task = None;
     state.scaffold_task = None;
     state.status = None;
@@ -897,9 +1104,11 @@ pub fn open_new_project_modal(world: &mut World, preset: TemplatePreset) {
     close_new_project_modal(world);
 
     let location = default_projects_dir();
+    let initial_linkage = TemplateLinkage::default();
     {
         let mut state = world.resource_mut::<NewProjectState>();
         state.preset = Some(preset.clone());
+        state.linkage = initial_linkage;
         state.location = location.clone();
         state.status = None;
     }
@@ -1043,9 +1252,58 @@ pub fn open_new_project_modal(world: &mut World, preset: TemplatePreset) {
         .id();
     world.entity_mut(browse).observe(on_browse_new_location);
 
-    // Template URL field — prefilled from the preset so Extension /
-    // Game paths don't require typing, and editable so power users
-    // can point at their own templates.
+    // Linkage selector — only shown for the Extension and Game
+    // presets. Custom pastes its own URL, so a segmented control
+    // wouldn't have anything meaningful to flip between.
+    //
+    // The Static button starts pre-selected to match the default
+    // in `NewProjectState::linkage`; clicking either button updates
+    // the resource AND rewrites the Template text input below so the
+    // user sees the URL change in place.
+    if preset.supports_linkage_selector() {
+        world.spawn((
+            Text::new("Template type"),
+            TextFont {
+                font: editor_font.clone(),
+                font_size: tokens::FONT_SM,
+                ..Default::default()
+            },
+            TextColor(tokens::TEXT_SECONDARY),
+            ChildOf(card),
+        ));
+        let linkage_row = world
+            .spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(8.0),
+                    ..Default::default()
+                },
+                ChildOf(card),
+            ))
+            .id();
+        spawn_linkage_button(
+            world,
+            linkage_row,
+            "Static",
+            "Plainly-compiled rlib/bin. Recommended.",
+            TemplateLinkage::Static,
+            initial_linkage,
+            editor_font.clone(),
+        );
+        spawn_linkage_button(
+            world,
+            linkage_row,
+            "Dylib",
+            "Hot-reloadable cdylib. Requires editor `--features dylib`.",
+            TemplateLinkage::Dylib,
+            initial_linkage,
+            editor_font.clone(),
+        );
+    }
+
+    // Template URL field — prefilled from the preset+linkage so
+    // Extension / Game paths don't require typing, and editable so
+    // power users can point at their own templates.
     world.spawn((
         Text::new("Template"),
         TextFont {
@@ -1062,7 +1320,7 @@ pub fn open_new_project_modal(world: &mut World, preset: TemplatePreset) {
         text_edit(
             TextEditProps::default()
                 .with_placeholder("https://github.com/…/your_template".to_string())
-                .with_default_value(preset.url())
+                .with_default_value(preset.url(initial_linkage))
                 .allow_empty(),
         ),
     ));
@@ -1250,7 +1508,7 @@ fn on_create_new_project(
         .unwrap_or_default();
 
     commands.queue(move |world: &mut World| {
-        let location = {
+        let (location, linkage) = {
             let state = world.resource::<NewProjectState>();
             if state.preset.is_none() {
                 return;
@@ -1258,7 +1516,7 @@ fn on_create_new_project(
             if state.scaffold_task.is_some() {
                 return; // already running
             }
-            state.location.clone()
+            (state.location.clone(), state.linkage)
         };
 
         let name = name.clone();
@@ -1281,7 +1539,7 @@ fn on_create_new_project(
         world.resource_mut::<NewProjectState>().status = Some(format!("Scaffolding `{name}`…"));
 
         let task = AsyncComputeTaskPool::get().spawn(async move {
-            scaffold_project(&name_for_task, &location_for_task, &url_for_task)
+            scaffold_project(&name_for_task, &location_for_task, &url_for_task, linkage)
         });
         world.resource_mut::<NewProjectState>().scaffold_task = Some(task);
     });
@@ -1312,32 +1570,52 @@ fn poll_new_project_tasks(
             match result {
                 Ok(project_path) => {
                     info!("Scaffolded project at {}", project_path.display());
-                    // Chain the first build with live progress
-                    // surfacing. The scaffold modal is already open
-                    // and will render the bar + log tail each frame.
                     let project_name = project_path
                         .file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or("project")
                         .to_owned();
-                    state.status = Some(format!("Building `{project_name}`…"));
-                    state.pending_project = Some(project_path.clone());
 
-                    let progress = std::sync::Arc::new(std::sync::Mutex::new(
-                        crate::ext_build::BuildProgress::default(),
-                    ));
-                    state.build_progress = Some(std::sync::Arc::clone(&progress));
-                    state.build_progress_snapshot =
-                        Some(crate::ext_build::BuildProgress::default());
+                    // Static scaffolds are standalone cargo projects
+                    // (bin + optional lib). They're not extension
+                    // cdylibs to install into this editor instance;
+                    // the user runs `cargo run` in the scaffolded dir
+                    // to launch their own editor-plus-game binary.
+                    // The dylib auto-build-and-install flow below would
+                    // just error out because the wrapper rewrites bevy
+                    // to the SDK dylib whose hash doesn't match what
+                    // cargo compiled for the fresh project (same cause
+                    // as the post-scaffold `can't find crate for jackdaw`
+                    // error when the wrapper was left on).
+                    if matches!(state.linkage, TemplateLinkage::Static) {
+                        state.status = Some(format!(
+                            "Scaffolded `{project_name}` at {}. Run `cargo run` in that directory.",
+                            project_path.display()
+                        ));
+                    } else {
+                        // Dylib path: chain the first build with live
+                        // progress surfacing. The scaffold modal is
+                        // already open and will render the bar + log
+                        // tail each frame.
+                        state.status = Some(format!("Building `{project_name}`…"));
+                        state.pending_project = Some(project_path.clone());
 
-                    let project_for_task = project_path;
-                    let progress_for_task = std::sync::Arc::clone(&progress);
-                    state.build_task = Some(AsyncComputeTaskPool::get().spawn(async move {
-                        crate::ext_build::build_extension_project_with_progress(
-                            &project_for_task,
-                            Some(progress_for_task),
-                        )
-                    }));
+                        let progress = std::sync::Arc::new(std::sync::Mutex::new(
+                            crate::ext_build::BuildProgress::default(),
+                        ));
+                        state.build_progress = Some(std::sync::Arc::clone(&progress));
+                        state.build_progress_snapshot =
+                            Some(crate::ext_build::BuildProgress::default());
+
+                        let project_for_task = project_path;
+                        let progress_for_task = std::sync::Arc::clone(&progress);
+                        state.build_task = Some(AsyncComputeTaskPool::get().spawn(async move {
+                            crate::ext_build::build_extension_project_with_progress(
+                                &project_for_task,
+                                Some(progress_for_task),
+                            )
+                        }));
+                    }
                 }
                 Err(err) => {
                     warn!("Scaffold failed: {err}");

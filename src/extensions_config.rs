@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use bevy::prelude::*;
+use bevy::{platform::collections::HashMap, prelude::*};
 use jackdaw_api::prelude::ExtensionKind;
 use jackdaw_api_internal::lifecycle::ExtensionCatalog;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// was extracted) can't take the editor down. The Extensions dialog
 /// should also hide or lock these so users can't try to turn them
 /// off.
-pub const REQUIRED_EXTENSIONS: &[&str] = &[crate::core_extension::CORE_EXTENSION_NAME];
+pub const REQUIRED_EXTENSIONS: &[&str] = &[crate::core_extension::CORE_EXTENSION_ID];
 
 /// True if the named extension is load-bearing and must not be
 /// user-toggleable.
@@ -69,16 +69,16 @@ pub fn write_enabled_list(enabled: &[String]) {
 pub fn resolve_enabled_list(world: &World) -> Vec<String> {
     let catalog = world.resource::<ExtensionCatalog>();
     let available: Vec<String> = catalog.iter().map(|s| s.to_string()).collect();
-    let builtins: HashSet<String> = catalog
-        .iter_with_kind()
-        .filter(|(_, kind)| *kind == ExtensionKind::Builtin)
-        .map(|(name, _)| name.to_string())
+    let builtins: HashMap<String, String> = catalog
+        .iter_with_content()
+        .filter(|(.., kind)| *kind == ExtensionKind::Builtin)
+        .map(|(id, label, ..)| (id.to_string(), label.to_string()))
         .collect();
 
     let mut resolved = match read_enabled_list() {
         Some(list) => {
             let on_disk: HashSet<String> = list.into_iter().collect();
-            let has_any_builtin = builtins.iter().any(|name| on_disk.contains(name));
+            let has_any_builtin = builtins.keys().any(|id| on_disk.contains(id));
             if !has_any_builtin {
                 available.clone()
             } else {

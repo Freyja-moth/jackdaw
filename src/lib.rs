@@ -346,12 +346,16 @@ impl ExtensionPlugin {
         Self::default()
     }
 
-    /// Register a custom extension. May be called any number of times.
-    ///
-    /// The extension's declared name comes from `JackdawExtension::name()`;
-    /// the `_name` argument is kept for backwards compatibility with the
-    /// pre-1.0 API and is ignored.
-    pub fn with_extension<F>(mut self, _name: impl Into<String>, ctor: F) -> Self
+    /// Register an extension. May be called any number of times.
+    pub fn with_extension<T: JackdawExtension + Default>(mut self) -> Self {
+        self.user_extensions
+            .push(std::sync::Arc::new(|| Box::new(T::default())));
+        self
+    }
+
+    /// Like [`ExtensionPlugin::with_extension`], but takes a constructor function
+    /// instead of a type implementing [`JackdawExtension`].
+    pub fn with_extension_ctor<F>(mut self, ctor: F) -> Self
     where
         F: Fn() -> Box<dyn JackdawExtension> + Send + Sync + 'static,
     {

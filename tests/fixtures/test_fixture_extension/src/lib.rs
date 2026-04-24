@@ -13,7 +13,7 @@ use jackdaw_api::prelude::*;
 pub struct TestFixtureExtension;
 
 impl JackdawExtension for TestFixtureExtension {
-    fn name() -> String {
+    fn id() -> String {
         "test_fixture".to_string()
     }
 
@@ -28,4 +28,9 @@ fn spawn_marker(_: In<OperatorParameters>, mut commands: Commands) -> OperatorRe
     OperatorResult::Finished
 }
 
-export_extension!("test_fixture", || Box::new(TestFixtureExtension));
+export_extension!(
+    "test_fixture",
+    "Test Fixture",
+    "A good old test fixture",
+    || Box::new(TestFixtureExtension)
+);

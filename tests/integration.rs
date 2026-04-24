@@ -40,7 +40,7 @@ impl<T: Operator> Default for IntegrationTestsExtension<T> {
 }
 
 impl<T: Operator + Send + Sync> JackdawExtension for IntegrationTestsExtension<T> {
-    fn name() -> String {
+    fn id() -> String {
         "Integration Tests".to_string()
     }
 

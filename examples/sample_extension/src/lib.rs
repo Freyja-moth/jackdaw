@@ -16,11 +16,20 @@ use bevy::prelude::*;
 use bevy_enhanced_input::prelude::*;
 use jackdaw_api::prelude::*;
 
+#[derive(Default)]
 pub struct SampleExtension;
 
 impl JackdawExtension for SampleExtension {
-    fn name() -> String {
+    fn id() -> String {
         "sample".to_string()
+    }
+
+    fn label() -> String {
+        "Example Extension".to_string()
+    }
+
+    fn description() -> String {
+        "Just a tiny example extension :)".to_string()
     }
 
     fn register_input_context(app: &mut App) {
@@ -94,4 +103,9 @@ fn hello_time(_: In<OperatorParameters>, time: Res<Time>) -> OperatorResult {
 // cdylib output needs it; the rlib output that's statically
 // linked into the prebuilt binary just carries a dead symbol,
 // which is harmless.
-jackdaw_api::export_extension!("sample", || Box::new(SampleExtension));
+jackdaw_api::export_extension!(
+    "sample",
+    "Example Extension",
+    "Just a tiny example extension :)",
+    || Box::new(SampleExtension)
+);

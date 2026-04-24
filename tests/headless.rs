@@ -84,7 +84,7 @@ impl SampleExtension {
 }
 
 impl JackdawExtension for SampleExtension {
-    fn name() -> String {
+    fn id() -> String {
         "sample".to_string()
     }
 

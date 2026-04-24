@@ -46,7 +46,7 @@ struct ExtensionsDialogOpen(bool);
 /// can look up which one to toggle.
 #[derive(Component)]
 struct ExtensionCheckbox {
-    extension_name: String,
+    extension_id: String,
 }
 
 /// Marks the "Install from file..." button. A single click observer
@@ -121,21 +121,25 @@ fn populate_extensions_dialog(
     // from each extension's declared `ExtensionKind`.
     let enabled_names: std::collections::HashSet<String> =
         loaded.iter().map(|e| e.name.clone()).collect();
-    let mut builtin_rows: Vec<(String, bool)> = Vec::new();
-    let mut custom_rows: Vec<(String, bool)> = Vec::new();
-    for (name, kind) in catalog.iter_with_kind() {
+    let mut builtin_rows: Vec<(String, String, bool)> = Vec::new();
+    let mut custom_rows: Vec<(String, String, bool)> = Vec::new();
+    for (id, label, _description, kind) in catalog.iter_with_content() {
         // Required extensions are load-bearing (the editor panics
         // without them), so they're not user-toggleable. Omit them
         // from the dialog entirely rather than rendering a locked
         // checkbox — they're implementation detail, not a user
         // choice.
-        if extensions_config::is_required(name) {
+        if extensions_config::is_required(id) {
             continue;
         }
-        let row = (name.to_string(), enabled_names.contains(name));
+        let row = (
+            id.to_string(),
+            label.to_string(),
+            enabled_names.contains(id),
+        );
         match kind {
             ExtensionKind::Builtin => builtin_rows.push(row),
-            ExtensionKind::Custom => custom_rows.push(row),
+            ExtensionKind::Regular => custom_rows.push(row),
         }
     }
     builtin_rows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -155,12 +159,11 @@ fn populate_extensions_dialog(
         .id();
 
     spawn_section_header(&mut commands, list, "Built-in");
-    for (name, checked) in builtin_rows {
-        let label = prettify(&name);
+    for (id, label, checked) in builtin_rows {
         commands.spawn((
             ChildOf(list),
             ExtensionCheckbox {
-                extension_name: name.clone(),
+                extension_id: id.clone(),
             },
             checkbox(CheckboxProps::new(label).checked(checked), &font, &ifont),
         ));
@@ -184,12 +187,11 @@ fn populate_extensions_dialog(
             )],
         ));
     } else {
-        for (name, checked) in custom_rows {
-            let label = prettify(&name);
+        for (id, label, checked) in custom_rows {
             commands.spawn((
                 ChildOf(list),
                 ExtensionCheckbox {
-                    extension_name: name.clone(),
+                    extension_id: id.clone(),
                 },
                 checkbox(CheckboxProps::new(label).checked(checked), &font, &ifont),
             ));
@@ -284,7 +286,7 @@ fn on_extension_checkbox_commit(
     let Ok(cb) = checkboxes.get(event.entity) else {
         return;
     };
-    let name = cb.extension_name.clone();
+    let name = cb.extension_id.clone();
     let checked = event.checked;
 
     // Belt-and-suspenders: required extensions shouldn't have a
@@ -613,21 +615,4 @@ fn classify_for_install(path: &std::path::Path) -> InstallTarget {
         Ok(jackdaw_loader::LoadedKind::Game(_)) => InstallTarget::Game,
         _ => InstallTarget::Extension,
     }
-}
-
-/// Convert `"jackdaw.asset_browser"` → `"Asset Browser"`.
-fn prettify(name: &str) -> String {
-    let stripped = name.strip_prefix("jackdaw.").unwrap_or(name);
-    let mut out = String::new();
-    for (i, part) in stripped.split(&['_', '.'][..]).enumerate() {
-        if i > 0 {
-            out.push(' ');
-        }
-        let mut chars = part.chars();
-        if let Some(c) = chars.next() {
-            out.extend(c.to_uppercase());
-            out.push_str(chars.as_str());
-        }
-    }
-    out
 }

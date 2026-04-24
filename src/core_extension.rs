@@ -7,7 +7,7 @@ use jackdaw_api_internal::lifecycle::ExtensionAppExt as _;
 /// [`crate::extensions_config::REQUIRED_EXTENSIONS`] and the
 /// Extensions dialog can refer to it without duplicating the
 /// literal string.
-pub const CORE_EXTENSION_NAME: &str = "jackdaw_core";
+pub const CORE_EXTENSION_ID: &str = "jackdaw.core";
 
 pub(super) fn plugin(app: &mut App) {
     app.register_extension::<JackdawCoreExtension>();
@@ -17,9 +17,18 @@ pub(super) fn plugin(app: &mut App) {
 pub struct JackdawCoreExtension;
 
 impl JackdawExtension for JackdawCoreExtension {
-    fn name() -> String {
-        CORE_EXTENSION_NAME.to_string()
+    fn id() -> String {
+        CORE_EXTENSION_ID.to_string()
     }
+
+    fn label() -> String {
+        "Jackdaw Core Functionality".to_string()
+    }
+
+    fn description() -> String {
+        "Important functionality for the Jackdaw editor. This extension is always loaded and cannot be disabled.".to_string()
+    }
+
     fn kind() -> ExtensionKind {
         ExtensionKind::Builtin
     }

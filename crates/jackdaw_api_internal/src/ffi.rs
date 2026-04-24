@@ -130,7 +130,9 @@ pub struct ExtensionEntry {
     pub api_version: u32,
     pub bevy_version: *const c_char,
     pub profile: *const c_char,
-    pub name: *const c_char,
+    pub id: *const c_char,
+    pub label: *const c_char,
+    pub description: *const c_char,
     pub ctor: unsafe extern "C" fn() -> Box<dyn crate::JackdawExtension>,
 }
 

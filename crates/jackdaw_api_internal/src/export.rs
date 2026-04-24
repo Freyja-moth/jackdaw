@@ -52,16 +52,33 @@
 /// dylib would fail at link time anyway (duplicate symbol).
 #[macro_export]
 macro_rules! export_extension {
-    ($name:literal, $ctor:expr) => {
+    ($id:expr, $label:expr, $description:expr, $ctor:expr) => {
         const _: () = {
-            const __JACKDAW_NAME: &::core::ffi::CStr = match ::core::ffi::CStr::from_bytes_with_nul(
-                ::core::concat!($name, "\0").as_bytes(),
-            ) {
-                ::core::result::Result::Ok(s) => s,
-                ::core::result::Result::Err(_) => {
-                    ::core::panic!("extension name contains interior NUL byte")
-                }
-            };
+            const __JACKDAW_ID: &::core::ffi::CStr =
+                match ::core::ffi::CStr::from_bytes_with_nul(::core::concat!($id, "\0").as_bytes())
+                {
+                    ::core::result::Result::Ok(s) => s,
+                    ::core::result::Result::Err(_) => {
+                        ::core::panic!("extension ID contains interior NUL byte")
+                    }
+                };
+            const __JACKDAW_LABEL: &::core::ffi::CStr =
+                match ::core::ffi::CStr::from_bytes_with_nul(::core::concat!($label, "\0").as_bytes())
+                {
+                    ::core::result::Result::Ok(s) => s,
+                    ::core::result::Result::Err(_) => {
+                        ::core::panic!("extension label contains interior NUL byte")
+                    }
+                };
+            const __JACKDAW_DESCRIPTION: &::core::ffi::CStr =
+                match ::core::ffi::CStr::from_bytes_with_nul(
+                    ::core::concat!($description, "\0").as_bytes(),
+                ) {
+                    ::core::result::Result::Ok(s) => s,
+                    ::core::result::Result::Err(_) => {
+                        ::core::panic!("extension description contains interior NUL byte")
+                    }
+                };
 
             unsafe extern "C" fn __jackdaw_ctor() -> ::std::boxed::Box<dyn $crate::JackdawExtension>
             {
@@ -75,7 +92,9 @@ macro_rules! export_extension {
                     api_version: $crate::ffi::API_VERSION,
                     bevy_version: $crate::ffi::BEVY_VERSION.as_ptr(),
                     profile: $crate::ffi::PROFILE.as_ptr(),
-                    name: __JACKDAW_NAME.as_ptr(),
+                    id: __JACKDAW_ID.as_ptr(),
+                    label: __JACKDAW_LABEL.as_ptr(),
+                    description: __JACKDAW_DESCRIPTION.as_ptr(),
                     ctor: __jackdaw_ctor,
                 }
             }

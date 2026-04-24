@@ -3,7 +3,7 @@
 //! Demonstrates the Fyrox-style / embedded-editor shape: Jackdaw
 //! linked into the binary as a library, the user's game plugin
 //! registered statically through
-//! [`EditorPlugin::with_extension`]. No dylib loading, no
+//! [`ExtensionPlugin::with_extension`]. No dylib loading, no
 //! rustc-wrapper, no `.cargo/config.toml` stitching — one
 //! `cargo run --example embedded_game` and you're in the editor with
 //! `MyGamePlugin` already active.
@@ -24,9 +24,8 @@ fn main() -> AppExit {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(
-            EditorPlugins::default().set(
-                ExtensionPlugin::new().with_extension("my_game", || Box::new(MyGameExtension)),
-            ),
+            EditorPlugins::default()
+                .set(ExtensionPlugin::new().with_extension::<MyGameExtension>()),
         )
         .run()
 }
@@ -35,10 +34,11 @@ fn main() -> AppExit {
 /// registers nothing so the example stays minimal; the extension
 /// still shows up under File → Extensions as proof the
 /// registration round-trip works.
+#[derive(Default)]
 struct MyGameExtension;
 
 impl JackdawExtension for MyGameExtension {
-    fn name() -> String {
+    fn id() -> String {
         "my_game".into()
     }
 

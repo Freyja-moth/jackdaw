@@ -57,7 +57,7 @@ pub fn verify_compat(entry: &ExtensionEntry) -> Result<(), CompatError> {
         entry.api_version,
         entry.bevy_version,
         entry.profile,
-        entry.name,
+        entry.id,
     )
 }
 

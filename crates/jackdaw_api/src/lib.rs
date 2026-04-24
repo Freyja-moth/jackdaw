@@ -38,10 +38,6 @@ pub use jackdaw_api_internal::{
     JackdawExtension, MenuEntryDescriptor, PanelContext, SectionBuildFn, WindowDescriptor,
 };
 
-/// Classifies a registered extension. Authors return this from
-/// [`JackdawExtension::kind`]; defaults to
-/// [`ExtensionKind::Custom`]. [`ExtensionKind::Builtin`] is reserved
-/// for extensions shipped inside the editor binary.
 pub use jackdaw_api_internal::lifecycle::ExtensionKind;
 
 /// `#[operator]` attribute macro. See [`jackdaw_api_macros`] for the

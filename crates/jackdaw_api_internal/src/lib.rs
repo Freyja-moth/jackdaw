@@ -109,12 +109,29 @@ pub mod prelude {
 /// Trait implemented by every extension. Declares the extension's name
 /// and registration logic; the framework handles everything else.
 pub trait JackdawExtension: Send + Sync + 'static + DynJackdawExtension {
-    /// A human-readable name for this extension. This will be displayed in UIs.
-    fn name() -> String
+    /// A unique identifier for this extension. This will be used to refer to the extension internally.
+    /// The prefix `"jackdaw."` as well as the name `jackdaw` itself are reserved for built-in extensions.
+    fn id() -> String
     where
         Self: Sized;
 
-    /// Classify this extension. Defaults to [`ExtensionKind::Custom`].
+    /// A human-readable name for this extension. This will be displayed in UIs.
+    fn label() -> String
+    where
+        Self: Sized,
+    {
+        Self::id()
+    }
+
+    /// A human-readable description for this extension. This will be displayed in UIs.
+    fn description() -> String
+    where
+        Self: Sized,
+    {
+        "".to_string()
+    }
+
+    /// Classify this extension. Defaults to [`ExtensionKind::Regular`].
     ///
     /// The Extensions dialog reads this to split the list into Built-in
     /// and Custom sections. Reserved as a future hook for marketplace
@@ -123,7 +140,7 @@ pub trait JackdawExtension: Send + Sync + 'static + DynJackdawExtension {
     where
         Self: Sized,
     {
-        ExtensionKind::Custom
+        ExtensionKind::Regular
     }
 
     /// Hook for one-time BEI input-context registration.
@@ -160,19 +177,30 @@ pub trait JackdawExtension: Send + Sync + 'static + DynJackdawExtension {
 /// Allows access to the extension's static methods via a dynamic dispatch.
 /// This is needed for when you're holding a `Box<dyn JackdawExtension>` and need to call methods that wouldn't require `self`.
 pub trait DynJackdawExtension {
-    /// Returns [`JackdawExtension::name`] via dynamic dispatch.
-    fn dyn_name(&self) -> String;
+    /// Returns [`JackdawExtension::id`] via dynamic dispatch.
+    fn dyn_id(&self) -> String;
+    /// Returns [`JackdawExtension::label`] via dynamic dispatch.
+    fn dyn_label(&self) -> String;
     /// Returns [`JackdawExtension::kind`] via dynamic dispatch.
     fn dyn_kind(&self) -> ExtensionKind;
+    /// Returns [`JackdawExtension::description`] via dynamic dispatch.
+    fn dyn_description(&self) -> String;
     /// Registers input contexts for this extension.
     fn dyn_register_input_context(&self, app: &mut App);
 }
 
 impl<T: JackdawExtension> DynJackdawExtension for T {
-    fn dyn_name(&self) -> String {
-        T::name()
+    fn dyn_id(&self) -> String {
+        T::id()
     }
 
+    fn dyn_label(&self) -> String {
+        T::label()
+    }
+
+    fn dyn_description(&self) -> String {
+        T::description()
+    }
     fn dyn_kind(&self) -> ExtensionKind {
         T::kind()
     }

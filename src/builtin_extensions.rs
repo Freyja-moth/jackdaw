@@ -14,8 +14,12 @@ use jackdaw_feathers::icons::Icon;
 pub struct CoreWindowsExtension;
 
 impl JackdawExtension for CoreWindowsExtension {
-    fn name() -> String {
-        "core_windows".to_string()
+    fn id() -> String {
+        "jackdaw.core_windows".to_string()
+    }
+
+    fn label() -> String {
+        "Core Windows".to_string()
     }
 
     fn kind() -> ExtensionKind {
@@ -89,8 +93,12 @@ impl JackdawExtension for CoreWindowsExtension {
 pub struct AssetBrowserExtension;
 
 impl JackdawExtension for AssetBrowserExtension {
-    fn name() -> String {
-        "asset_browser".to_string()
+    fn id() -> String {
+        "jackdaw.asset_browser".to_string()
+    }
+
+    fn label() -> String {
+        "Asset Browser".to_string()
     }
 
     fn kind() -> ExtensionKind {
@@ -126,8 +134,12 @@ impl JackdawExtension for AssetBrowserExtension {
 pub struct TimelineExtension;
 
 impl JackdawExtension for TimelineExtension {
-    fn name() -> String {
-        "timeline".to_string()
+    fn id() -> String {
+        "jackdaw.timeline".to_string()
+    }
+
+    fn label() -> String {
+        "Timeline".to_string()
     }
 
     fn kind() -> ExtensionKind {
@@ -153,8 +165,12 @@ impl JackdawExtension for TimelineExtension {
 pub struct TerminalExtension;
 
 impl JackdawExtension for TerminalExtension {
-    fn name() -> String {
-        "terminal".to_string()
+    fn id() -> String {
+        "jackdaw.terminal".to_string()
+    }
+
+    fn label() -> String {
+        "Terminal".to_string()
     }
 
     fn kind() -> ExtensionKind {
@@ -197,8 +213,12 @@ impl JackdawExtension for TerminalExtension {
 pub struct InspectorExtension;
 
 impl JackdawExtension for InspectorExtension {
-    fn name() -> String {
-        "inspector".to_string()
+    fn id() -> String {
+        "jackdaw.inspector".to_string()
+    }
+
+    fn label() -> String {
+        "Inspector".to_string()
     }
 
     fn kind() -> ExtensionKind {

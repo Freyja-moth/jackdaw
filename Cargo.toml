@@ -91,6 +91,7 @@ pathdiff.workspace = true
 notify = "8"
 ctrlc = "3"
 bevy_simple_subsecond_system = { version = "0.2", optional = true }
+walkdir = "2.5.0"
 
 [workspace.dependencies]
 bevy = { version = "0.18", features = ["experimental_bevy_feathers", "serialize", "debug", "bevy_remote", "file_watcher"] }

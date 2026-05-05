@@ -1,13 +1,5 @@
 use bevy::prelude::*;
 
-pub struct CollapsiblePlugin;
-
-impl Plugin for CollapsiblePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_observer(toggle_collapsible);
-    }
-}
-
 /// Marker on a collapsible section root.
 #[derive(Component)]
 pub struct CollapsibleSection {
@@ -32,11 +24,8 @@ fn toggle_collapsible(
     event: On<ToggleCollapsible>,
     mut sections: Query<(&mut CollapsibleSection, &Children)>,
     mut nodes: Query<&mut Node, With<CollapsibleBody>>,
-) {
-    let target = event.entity;
-    let Ok((mut section, children)) = sections.get_mut(target) else {
-        return;
-    };
+) -> Result {
+    let (mut section, children) = sections.get_mut(event.entity)?;
 
     section.collapsed = !section.collapsed;
 
@@ -48,5 +37,15 @@ fn toggle_collapsible(
                 Display::Flex
             };
         }
+    }
+
+    Ok(())
+}
+
+pub struct CollapsiblePlugin;
+
+impl Plugin for CollapsiblePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_observer(toggle_collapsible);
     }
 }

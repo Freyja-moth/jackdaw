@@ -19,6 +19,7 @@ pub mod inspector;
 pub mod keybind_settings;
 pub mod keybinds;
 pub use inspector::{EditorMeta, ReflectEditorMeta};
+pub mod containers;
 pub mod core_extension;
 pub mod ext_build;
 mod extension_lifecycle;
@@ -42,6 +43,7 @@ pub mod project_select;
 pub mod remote;
 pub mod restart;
 pub mod scene_io;
+pub mod screens;
 pub mod sdk_paths;
 pub mod selection;
 pub mod snapping;
@@ -62,6 +64,7 @@ use bevy::{
     input_focus::InputDispatchPlugin,
     picking::hover::HoverMap,
     prelude::*,
+    ui_widgets::Activate,
 };
 use jackdaw_api::prelude::*;
 use jackdaw_api_internal::lifecycle::{RegisteredMenuEntry, RegisteredWindow};
@@ -521,7 +524,7 @@ fn spawn_layout(mut commands: Commands, icon_font: Res<jackdaw_feathers::icons::
 /// creation logic as `on_create_clip_for_selection` but sources the
 /// parent from the active clip's `ChildOf`, not from `Selection`.
 fn on_header_new_clip(
-    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    event: On<Activate>,
     buttons: Query<(), With<jackdaw_animation::TimelineHeaderNewClipButton>>,
     selected_clip: Res<jackdaw_animation::SelectedClip>,
     parents: Query<&ChildOf>,
@@ -571,7 +574,7 @@ fn on_header_new_clip(
 /// Observer: the header blend-graph button spawns a new blend graph
 /// clip on the same entity as the currently-selected clip.
 fn on_header_new_blend_graph(
-    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    event: On<Activate>,
     buttons: Query<(), With<jackdaw_animation::TimelineHeaderNewBlendGraphButton>>,
     selected_clip: Res<jackdaw_animation::SelectedClip>,
     parents: Query<&ChildOf>,
@@ -742,7 +745,7 @@ fn decorate_timeline_tooltips(
 /// something to connect to. Mirror of
 /// [`on_create_clip_for_selection`] for the node-canvas path.
 fn on_create_blend_graph_for_selection(
-    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    event: On<Activate>,
     buttons: Query<(), With<jackdaw_animation::TimelineCreateBlendGraphButton>>,
     selection: Res<selection::Selection>,
     names: Query<&Name>,
@@ -814,7 +817,7 @@ fn on_create_blend_graph_for_selection(
 /// animation crate deliberately exports no custom commands; this is
 /// the minimum-wrapping form of "create a clip."
 fn on_create_clip_for_selection(
-    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    event: On<Activate>,
     buttons: Query<(), With<jackdaw_animation::TimelineCreateClipButton>>,
     selection: Res<selection::Selection>,
     names: Query<&Name>,
@@ -1986,328 +1989,328 @@ fn populate_menu(world: &mut World) {
 }
 
 fn handle_menu_action(event: On<MenuAction>, mut commands: Commands) {
-    match event.action.as_str() {
-        "file.new" => {
-            commands.queue(|world: &mut World| {
-                scene_io::new_scene(world);
-            });
-        }
-        "file.save" => {
-            commands.queue(|world: &mut World| {
-                scene_io::save_scene(world);
-            });
-        }
-        "file.save_as" => {
-            commands.queue(|world: &mut World| {
-                scene_io::save_scene_as(world);
-            });
-        }
-        "file.open" => {
-            commands.queue(|world: &mut World| {
-                scene_io::load_scene(world);
-            });
-        }
-        "file.save_template" => {
-            // Use a default name based on the selected entity
-            commands.queue(|world: &mut World| {
-                let selection = world.resource::<Selection>();
-                let name = selection
-                    .primary()
-                    .and_then(|e| world.get::<Name>(e).map(|n| n.as_str().to_string()))
-                    .unwrap_or_else(|| "template".to_string());
-                entity_templates::save_entity_template(world, &name);
-            });
-        }
-        "edit.undo" => {
-            commands.queue(|world: &mut World| {
-                world.resource_scope(|world, mut history: Mut<commands::CommandHistory>| {
-                    history.undo(world);
-                });
-            });
-        }
-        "edit.redo" => {
-            commands.queue(|world: &mut World| {
-                world.resource_scope(|world, mut history: Mut<commands::CommandHistory>| {
-                    history.redo(world);
-                });
-            });
-        }
-        "edit.delete" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::delete_selected(world);
-            });
-        }
-        "edit.duplicate" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::duplicate_selected(world);
-            });
-        }
-        "edit.join" => {
-            commands.queue(draw_brush::join_selected_brushes_impl);
-        }
-        "edit.csg_subtract" => {
-            commands.queue(draw_brush::csg_subtract_selected_impl);
-        }
-        "edit.csg_intersect" => {
-            commands.queue(draw_brush::csg_intersect_selected_impl);
-        }
-        "edit.extend_to_brush" => {
-            commands.queue(|world: &mut World| {
-                let edit_mode = *world.resource::<crate::brush::EditMode>();
-                let selection = world.resource::<Selection>();
-                let entities = selection.entities.clone();
-
-                let brush_selection = world.resource::<crate::brush::BrushSelection>();
-
-                // Resolve primary + face_index: prefer active face-mode selection,
-                // fall back to remembered face.
-                let (primary, face_index) = if edit_mode
-                    == crate::brush::EditMode::BrushEdit(crate::brush::BrushEditMode::Face)
-                {
-                    let primary = brush_selection.entity;
-                    let face = brush_selection.faces.last().copied();
-                    match (primary, face) {
-                        (Some(p), Some(f)) => (p, f),
-                        _ => return,
-                    }
-                } else {
-                    let primary = match selection.primary() {
-                        Some(e) => e,
-                        None => return,
-                    };
-                    let face_index = if brush_selection.last_face_entity == Some(primary) {
-                        brush_selection.last_face_index
-                    } else {
-                        None
-                    };
-                    match face_index {
-                        Some(f) => (primary, f),
-                        None => return,
-                    }
-                };
-
-                let mut brush_query = world.query_filtered::<Entity, With<jackdaw_jsn::Brush>>();
-                let targets: Vec<Entity> = entities
-                    .iter()
-                    .copied()
-                    .filter(|&e| e != primary && brush_query.get(world, e).is_ok())
-                    .collect();
-                if targets.is_empty() {
-                    return;
-                }
-
-                draw_brush::extend_face_to_brush_impl(world, primary, &targets, face_index);
-
-                // Exit face mode if we were in it (geometry changed, indices invalid)
-                if edit_mode == crate::brush::EditMode::BrushEdit(crate::brush::BrushEditMode::Face)
-                {
-                    *world.resource_mut::<crate::brush::EditMode>() =
-                        crate::brush::EditMode::Object;
-                    let mut bs = world.resource_mut::<crate::brush::BrushSelection>();
-                    bs.entity = None;
-                    bs.faces.clear();
-                    bs.vertices.clear();
-                    bs.edges.clear();
-                }
-            });
-        }
-        "file.keybinds" => {
-            commands.trigger(keybind_settings::OpenKeybindSettingsEvent);
-        }
-        "file.extensions" => {
-            commands.queue(|world: &mut World| {
-                extensions_dialog::open_extensions_dialog(world);
-            });
-        }
-        "file.home" => {
-            commands.queue(|world: &mut World| {
-                world
-                    .resource_mut::<NextState<AppState>>()
-                    .set(AppState::ProjectSelect);
-            });
-        }
-        "file.hot_reload" => {
-            commands.queue(|world: &mut World| {
-                let mut enabled = world.resource_mut::<hot_reload::HotReloadEnabled>();
-                enabled.0 = !enabled.0;
-                let state = if enabled.0 { "on" } else { "off" };
-                info!("Hot reload toggled {state}");
-                // Menu shows the current on/off state — trigger a
-                // rebuild so the label refreshes.
-                world.resource_mut::<MenuBarDirty>().0 = true;
-            });
-        }
-        "file.open_recent" => {
-            commands.queue(open_recent_dialog);
-        }
-        "view.wireframe" => {
-            commands.queue(|world: &mut World| {
-                let mut settings = world.resource_mut::<view_modes::ViewModeSettings>();
-                settings.wireframe = !settings.wireframe;
-            });
-        }
-        "view.bounding_boxes" => {
-            commands.queue(|world: &mut World| {
-                let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
-                settings.show_bounding_boxes = !settings.show_bounding_boxes;
-            });
-        }
-        "view.bounding_box_mode" => {
-            commands.queue(|world: &mut World| {
-                let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
-                settings.bounding_box_mode = match settings.bounding_box_mode {
-                    viewport_overlays::BoundingBoxMode::Aabb => {
-                        viewport_overlays::BoundingBoxMode::ConvexHull
-                    }
-                    viewport_overlays::BoundingBoxMode::ConvexHull => {
-                        viewport_overlays::BoundingBoxMode::Aabb
-                    }
-                };
-            });
-        }
-        "view.face_grid" => {
-            commands.queue(|world: &mut World| {
-                let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
-                settings.show_face_grid = !settings.show_face_grid;
-            });
-        }
-        "view.brush_wireframe" => {
-            commands.queue(|world: &mut World| {
-                let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
-                settings.show_brush_wireframe = !settings.show_brush_wireframe;
-            });
-        }
-        "view.show_brush_outline" => {
-            commands.queue(|world: &mut World| {
-                let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
-                settings.show_brush_outline = !settings.show_brush_outline;
-            });
-        }
-        "view.alignment_guides" => {
-            commands.queue(|world: &mut World| {
-                let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
-                settings.show_alignment_guides = !settings.show_alignment_guides;
-            });
-        }
-        "view.collider_gizmos" => {
-            commands.queue(|world: &mut World| {
-                let mut config =
-                    world.resource_mut::<jackdaw_avian_integration::PhysicsOverlayConfig>();
-                config.show_colliders = !config.show_colliders;
-            });
-        }
-        "view.hierarchy_arrows" => {
-            commands.queue(|world: &mut World| {
-                let mut config =
-                    world.resource_mut::<jackdaw_avian_integration::PhysicsOverlayConfig>();
-                config.show_hierarchy_arrows = !config.show_hierarchy_arrows;
-            });
-        }
-        "add.cube" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Cube);
-            });
-        }
-        "add.sphere" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Sphere);
-            });
-        }
-        "add.point_light" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::PointLight);
-            });
-        }
-        "add.directional_light" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::create_entity_in_world(
-                    world,
-                    entity_ops::EntityTemplate::DirectionalLight,
-                );
-            });
-        }
-        "add.spot_light" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::SpotLight);
-            });
-        }
-        "add.camera" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Camera3d);
-            });
-        }
-        "add.empty" => {
-            commands.queue(|world: &mut World| {
-                entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Empty);
-            });
-        }
-        "add.navmesh" => {
-            commands.queue(|world: &mut World| {
-                spawn_undoable(world, "Add Navmesh Region", |world| {
-                    let mut system_state: SystemState<(Commands, ResMut<Selection>)> =
-                        SystemState::new(world);
-                    let (mut commands, mut selection) = system_state.get_mut(world);
-                    let entity = navmesh::spawn_navmesh_entity(&mut commands);
-                    selection.select_single(&mut commands, entity);
-                    system_state.apply(world);
-                    scene_io::register_entity_in_ast(world, entity);
-                    entity
-                });
-            });
-        }
-        "add.terrain" => {
-            commands.queue(|world: &mut World| {
-                spawn_undoable(world, "Add Terrain", |world| {
-                    let mut system_state: SystemState<(Commands, ResMut<Selection>)> =
-                        SystemState::new(world);
-                    let (mut commands, mut selection) = system_state.get_mut(world);
-                    let entity = terrain::spawn_terrain_entity(&mut commands);
-                    selection.select_single(&mut commands, entity);
-                    system_state.apply(world);
-                    scene_io::register_entity_in_ast(world, entity);
-                    entity
-                });
-            });
-        }
-        "add.prefab" => {
-            commands.queue(|world: &mut World| {
-                crate::prefab_picker::open_prefab_picker(world);
-            });
-        }
-        action if action.starts_with(OP_PREFIX) => {
-            // Extension-contributed menu entry. The action id is the
-            // operator id with an "op:" prefix. Dispatching through the
-            // operator system rather than a parallel path keeps
-            // behaviour (history entry, poll, modal) identical to
-            // keybind-triggered operators.
-            let operator_id = action.strip_prefix(OP_PREFIX).unwrap().to_string();
-            commands.queue(move |world: &mut World| {
-                world
-                    .operator(operator_id)
-                    .settings(CallOperatorSettings {
-                        execution_context: ExecutionContext::Invoke,
-                        creates_history_entry: true,
-                    })
-                    .call()
-            });
-        }
-        action if action.starts_with("window.") => {
-            if action == "window.reset_layout" {
-                commands.queue(|world: &mut World| {
-                    reset_layout(world);
-                });
-                return;
-            }
-
-            if let Some(window_id) = action.strip_prefix("window.open:") {
-                let id = window_id.to_string();
-                commands.queue(move |world: &mut World| {
-                    open_window_in_default_area(world, &id);
-                });
-            }
-        }
-        _ => {}
-    }
+    // match event.action.as_str() {
+    //     "file.new" => {
+    //         commands.queue(|world: &mut World| {
+    //             scene_io::new_scene(world);
+    //         });
+    //     }
+    //     "file.save" => {
+    //         commands.queue(|world: &mut World| {
+    //             scene_io::save_scene(world);
+    //         });
+    //     }
+    //     "file.save_as" => {
+    //         commands.queue(|world: &mut World| {
+    //             scene_io::save_scene_as(world);
+    //         });
+    //     }
+    //     "file.open" => {
+    //         commands.queue(|world: &mut World| {
+    //             scene_io::load_scene(world);
+    //         });
+    //     }
+    //     "file.save_template" => {
+    //         // Use a default name based on the selected entity
+    //         commands.queue(|world: &mut World| {
+    //             let selection = world.resource::<Selection>();
+    //             let name = selection
+    //                 .primary()
+    //                 .and_then(|e| world.get::<Name>(e).map(|n| n.as_str().to_string()))
+    //                 .unwrap_or_else(|| "template".to_string());
+    //             entity_templates::save_entity_template(world, &name);
+    //         });
+    //     }
+    //     "edit.undo" => {
+    //         commands.queue(|world: &mut World| {
+    //             world.resource_scope(|world, mut history: Mut<commands::CommandHistory>| {
+    //                 history.undo(world);
+    //             });
+    //         });
+    //     }
+    //     "edit.redo" => {
+    //         commands.queue(|world: &mut World| {
+    //             world.resource_scope(|world, mut history: Mut<commands::CommandHistory>| {
+    //                 history.redo(world);
+    //             });
+    //         });
+    //     }
+    //     "edit.delete" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::delete_selected(world);
+    //         });
+    //     }
+    //     "edit.duplicate" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::duplicate_selected(world);
+    //         });
+    //     }
+    //     "edit.join" => {
+    //         commands.queue(draw_brush::join_selected_brushes_impl);
+    //     }
+    //     "edit.csg_subtract" => {
+    //         commands.queue(draw_brush::csg_subtract_selected_impl);
+    //     }
+    //     "edit.csg_intersect" => {
+    //         commands.queue(draw_brush::csg_intersect_selected_impl);
+    //     }
+    //     "edit.extend_to_brush" => {
+    //         commands.queue(|world: &mut World| {
+    //             let edit_mode = *world.resource::<crate::brush::EditMode>();
+    //             let selection = world.resource::<Selection>();
+    //             let entities = selection.entities.clone();
+    //
+    //             let brush_selection = world.resource::<crate::brush::BrushSelection>();
+    //
+    //             // Resolve primary + face_index: prefer active face-mode selection,
+    //             // fall back to remembered face.
+    //             let (primary, face_index) = if edit_mode
+    //                 == crate::brush::EditMode::BrushEdit(crate::brush::BrushEditMode::Face)
+    //             {
+    //                 let primary = brush_selection.entity;
+    //                 let face = brush_selection.faces.last().copied();
+    //                 match (primary, face) {
+    //                     (Some(p), Some(f)) => (p, f),
+    //                     _ => return,
+    //                 }
+    //             } else {
+    //                 let primary = match selection.primary() {
+    //                     Some(e) => e,
+    //                     None => return,
+    //                 };
+    //                 let face_index = if brush_selection.last_face_entity == Some(primary) {
+    //                     brush_selection.last_face_index
+    //                 } else {
+    //                     None
+    //                 };
+    //                 match face_index {
+    //                     Some(f) => (primary, f),
+    //                     None => return,
+    //                 }
+    //             };
+    //
+    //             let mut brush_query = world.query_filtered::<Entity, With<jackdaw_jsn::Brush>>();
+    //             let targets: Vec<Entity> = entities
+    //                 .iter()
+    //                 .copied()
+    //                 .filter(|&e| e != primary && brush_query.get(world, e).is_ok())
+    //                 .collect();
+    //             if targets.is_empty() {
+    //                 return;
+    //             }
+    //
+    //             draw_brush::extend_face_to_brush_impl(world, primary, &targets, face_index);
+    //
+    //             // Exit face mode if we were in it (geometry changed, indices invalid)
+    //             if edit_mode == crate::brush::EditMode::BrushEdit(crate::brush::BrushEditMode::Face)
+    //             {
+    //                 *world.resource_mut::<crate::brush::EditMode>() =
+    //                     crate::brush::EditMode::Object;
+    //                 let mut bs = world.resource_mut::<crate::brush::BrushSelection>();
+    //                 bs.entity = None;
+    //                 bs.faces.clear();
+    //                 bs.vertices.clear();
+    //                 bs.edges.clear();
+    //             }
+    //         });
+    //     }
+    //     "file.keybinds" => {
+    //         commands.trigger(keybind_settings::OpenKeybindSettingsEvent);
+    //     }
+    //     "file.extensions" => {
+    //         commands.queue(|world: &mut World| {
+    //             extensions_dialog::open_extensions_dialog(world);
+    //         });
+    //     }
+    //     "file.home" => {
+    //         commands.queue(|world: &mut World| {
+    //             world
+    //                 .resource_mut::<NextState<AppState>>()
+    //                 .set(AppState::ProjectSelect);
+    //         });
+    //     }
+    //     "file.hot_reload" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut enabled = world.resource_mut::<hot_reload::HotReloadEnabled>();
+    //             enabled.0 = !enabled.0;
+    //             let state = if enabled.0 { "on" } else { "off" };
+    //             info!("Hot reload toggled {state}");
+    //             // Menu shows the current on/off state — trigger a
+    //             // rebuild so the label refreshes.
+    //             world.resource_mut::<MenuBarDirty>().0 = true;
+    //         });
+    //     }
+    //     "file.open_recent" => {
+    //         commands.queue(open_recent_dialog);
+    //     }
+    //     "view.wireframe" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut settings = world.resource_mut::<view_modes::ViewModeSettings>();
+    //             settings.wireframe = !settings.wireframe;
+    //         });
+    //     }
+    //     "view.bounding_boxes" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
+    //             settings.show_bounding_boxes = !settings.show_bounding_boxes;
+    //         });
+    //     }
+    //     "view.bounding_box_mode" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
+    //             settings.bounding_box_mode = match settings.bounding_box_mode {
+    //                 viewport_overlays::BoundingBoxMode::Aabb => {
+    //                     viewport_overlays::BoundingBoxMode::ConvexHull
+    //                 }
+    //                 viewport_overlays::BoundingBoxMode::ConvexHull => {
+    //                     viewport_overlays::BoundingBoxMode::Aabb
+    //                 }
+    //             };
+    //         });
+    //     }
+    //     "view.face_grid" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
+    //             settings.show_face_grid = !settings.show_face_grid;
+    //         });
+    //     }
+    //     "view.brush_wireframe" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
+    //             settings.show_brush_wireframe = !settings.show_brush_wireframe;
+    //         });
+    //     }
+    //     "view.show_brush_outline" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
+    //             settings.show_brush_outline = !settings.show_brush_outline;
+    //         });
+    //     }
+    //     "view.alignment_guides" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut settings = world.resource_mut::<viewport_overlays::OverlaySettings>();
+    //             settings.show_alignment_guides = !settings.show_alignment_guides;
+    //         });
+    //     }
+    //     "view.collider_gizmos" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut config =
+    //                 world.resource_mut::<jackdaw_avian_integration::PhysicsOverlayConfig>();
+    //             config.show_colliders = !config.show_colliders;
+    //         });
+    //     }
+    //     "view.hierarchy_arrows" => {
+    //         commands.queue(|world: &mut World| {
+    //             let mut config =
+    //                 world.resource_mut::<jackdaw_avian_integration::PhysicsOverlayConfig>();
+    //             config.show_hierarchy_arrows = !config.show_hierarchy_arrows;
+    //         });
+    //     }
+    //     "add.cube" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Cube);
+    //         });
+    //     }
+    //     "add.sphere" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Sphere);
+    //         });
+    //     }
+    //     "add.point_light" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::PointLight);
+    //         });
+    //     }
+    //     "add.directional_light" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::create_entity_in_world(
+    //                 world,
+    //                 entity_ops::EntityTemplate::DirectionalLight,
+    //             );
+    //         });
+    //     }
+    //     "add.spot_light" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::SpotLight);
+    //         });
+    //     }
+    //     "add.camera" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Camera3d);
+    //         });
+    //     }
+    //     "add.empty" => {
+    //         commands.queue(|world: &mut World| {
+    //             entity_ops::create_entity_in_world(world, entity_ops::EntityTemplate::Empty);
+    //         });
+    //     }
+    //     "add.navmesh" => {
+    //         commands.queue(|world: &mut World| {
+    //             spawn_undoable(world, "Add Navmesh Region", |world| {
+    //                 let mut system_state: SystemState<(Commands, ResMut<Selection>)> =
+    //                     SystemState::new(world);
+    //                 let (mut commands, mut selection) = system_state.get_mut(world);
+    //                 let entity = navmesh::spawn_navmesh_entity(&mut commands);
+    //                 selection.select_single(&mut commands, entity);
+    //                 system_state.apply(world);
+    //                 scene_io::register_entity_in_ast(world, entity);
+    //                 entity
+    //             });
+    //         });
+    //     }
+    //     "add.terrain" => {
+    //         commands.queue(|world: &mut World| {
+    //             spawn_undoable(world, "Add Terrain", |world| {
+    //                 let mut system_state: SystemState<(Commands, ResMut<Selection>)> =
+    //                     SystemState::new(world);
+    //                 let (mut commands, mut selection) = system_state.get_mut(world);
+    //                 let entity = terrain::spawn_terrain_entity(&mut commands);
+    //                 selection.select_single(&mut commands, entity);
+    //                 system_state.apply(world);
+    //                 scene_io::register_entity_in_ast(world, entity);
+    //                 entity
+    //             });
+    //         });
+    //     }
+    //     "add.prefab" => {
+    //         commands.queue(|world: &mut World| {
+    //             crate::prefab_picker::open_prefab_picker(world);
+    //         });
+    //     }
+    //     action if action.starts_with(OP_PREFIX) => {
+    //         // Extension-contributed menu entry. The action id is the
+    //         // operator id with an "op:" prefix. Dispatching through the
+    //         // operator system rather than a parallel path keeps
+    //         // behaviour (history entry, poll, modal) identical to
+    //         // keybind-triggered operators.
+    //         let operator_id = action.strip_prefix(OP_PREFIX).unwrap().to_string();
+    //         commands.queue(move |world: &mut World| {
+    //             world
+    //                 .operator(operator_id)
+    //                 .settings(CallOperatorSettings {
+    //                     execution_context: ExecutionContext::Invoke,
+    //                     creates_history_entry: true,
+    //                 })
+    //                 .call()
+    //         });
+    //     }
+    //     action if action.starts_with("window.") => {
+    //         if action == "window.reset_layout" {
+    //             commands.queue(|world: &mut World| {
+    //                 reset_layout(world);
+    //             });
+    //             return;
+    //         }
+    //
+    //         if let Some(window_id) = action.strip_prefix("window.open:") {
+    //             let id = window_id.to_string();
+    //             commands.queue(move |world: &mut World| {
+    //                 open_window_in_default_area(world, &id);
+    //             });
+    //         }
+    //     }
+    //     _ => {}
+    // }
 }
 
 /// TODO: This should not exist. All actions should be operators.

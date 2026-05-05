@@ -1,5 +1,6 @@
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
+use bevy::ui::InteractionDisabled;
 use lucide_icons::Icon;
 
 use crate::icons::EditorFont;
@@ -10,16 +11,11 @@ use crate::tokens::{
 
 use crate::cursor::HoverCursor;
 
-#[derive(EntityEvent)]
-pub struct ButtonClickEvent {
-    pub entity: Entity,
-}
-
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, (setup_button, handle_hover, handle_button_click));
+    app.add_systems(Update, (setup_button, handle_hover));
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone, Copy)]
 pub struct EditorButton;
 
 #[derive(Component, Default, Clone, Copy, PartialEq)]
@@ -31,7 +27,6 @@ pub enum ButtonVariant {
     Ghost,
     Active,
     ActiveAlt,
-    Disabled,
 }
 
 #[derive(Component, Default, Clone, Copy)]
@@ -43,19 +38,28 @@ pub enum ButtonSize {
 }
 
 impl ButtonVariant {
-    pub fn bg_color(&self, hovered: bool) -> Srgba {
+    pub fn bg_color(&self, hovered: bool, interaction_disabled: bool) -> Srgba {
         use bevy::color::palettes::tailwind;
-        match (self, hovered) {
-            (Self::Default, _) => tailwind::ZINC_700,
-            (Self::Ghost | Self::ActiveAlt | Self::Disabled, _) => TEXT_BODY_COLOR,
-            (Self::Primary | Self::Active, _) => PRIMARY_COLOR,
-            (Self::Destructive, false) => tailwind::RED_500,
-            (Self::Destructive, true) => tailwind::RED_600,
+
+        if interaction_disabled {
+            return TEXT_BODY_COLOR;
+        }
+
+        match self {
+            Self::Default => tailwind::ZINC_700,
+            Self::Ghost | Self::ActiveAlt => TEXT_BODY_COLOR,
+            Self::Primary | Self::Active => PRIMARY_COLOR,
+            Self::Destructive if hovered => tailwind::RED_600,
+            Self::Destructive => tailwind::RED_500,
         }
     }
-    pub fn bg_opacity(&self, hovered: bool) -> f32 {
+    pub fn bg_opacity(&self, hovered: bool, interaction_disabled: bool) -> f32 {
+        if interaction_disabled {
+            return 0.0;
+        }
+
         match (self, hovered) {
-            (Self::Ghost, false) | (Self::Disabled, _) => 0.0,
+            (Self::Ghost, false) => 0.0,
             (Self::Active, false) => 0.1,
             (Self::Active, true) => 0.15,
             (Self::ActiveAlt, _) => 0.05,
@@ -66,18 +70,26 @@ impl ButtonVariant {
             (Self::Primary | Self::Destructive, true) => 0.9,
         }
     }
-    pub fn text_color(&self) -> Srgba {
+    pub fn text_color(&self, interaction_disabled: bool) -> Srgba {
+        if interaction_disabled {
+            return TEXT_MUTED_COLOR;
+        }
+
         match self {
             Self::Default | Self::Ghost | Self::ActiveAlt => TEXT_BODY_COLOR,
             Self::Primary | Self::Destructive => TEXT_DISPLAY_COLOR,
             Self::Active => PRIMARY_COLOR.lighter(0.05),
-            Self::Disabled => TEXT_MUTED_COLOR,
         }
     }
-    pub fn border_color(&self) -> Srgba {
+    pub fn border_color(&self, interaction_disabled: bool) -> Srgba {
         use bevy::color::palettes::tailwind;
+
+        if interaction_disabled {
+            return tailwind::ZINC_700;
+        }
+
         match self {
-            Self::Default | Self::Ghost | Self::Disabled => tailwind::ZINC_700,
+            Self::Default | Self::Ghost => tailwind::ZINC_700,
             Self::Primary | Self::Active => PRIMARY_COLOR,
             Self::Destructive => tailwind::RED_500,
             Self::ActiveAlt => TEXT_BODY_COLOR,
@@ -89,10 +101,14 @@ impl ButtonVariant {
             _ => Val::Px(0.0),
         }
     }
-    pub fn border_opacity(&self, hovered: bool) -> f32 {
-        match (self, hovered) {
-            (Self::Ghost, false) | (Self::Disabled, _) => 0.0,
-            (Self::ActiveAlt, _) => 0.2,
+    pub fn border_opacity(&self, hovered: bool, interaction_disabled: bool) -> f32 {
+        if interaction_disabled {
+            return 0.0;
+        }
+
+        match self {
+            Self::Ghost if !hovered => 0.0,
+            Self::ActiveAlt => 0.2,
             _ => 1.0,
         }
     }
@@ -262,14 +278,14 @@ pub(crate) fn button_base(
         },
         BackgroundColor(
             variant
-                .bg_color(false)
-                .with_alpha(variant.bg_opacity(false))
+                .bg_color(false, false)
+                .with_alpha(variant.bg_opacity(false, false))
                 .into(),
         ),
         BorderColor::all(
             variant
-                .border_color()
-                .with_alpha(variant.border_opacity(false)),
+                .border_color(false)
+                .with_alpha(variant.border_opacity(false, false)),
         ),
     )
 }
@@ -369,7 +385,7 @@ fn setup_button(
                             font_size: size.icon_size(),
                             ..default()
                         },
-                        TextColor(variant.text_color().into()),
+                        TextColor(variant.text_color(false).into()),
                     ));
                 }
 
@@ -382,7 +398,7 @@ fn setup_button(
                             weight: FontWeight::MEDIUM,
                             ..default()
                         },
-                        TextColor(variant.text_color().into()),
+                        TextColor(variant.text_color(false).into()),
                         Node {
                             flex_grow: 1.0,
                             ..default()
@@ -414,7 +430,7 @@ fn setup_button(
                             font_size: size.icon_size(),
                             ..default()
                         },
-                        TextColor(variant.text_color().into()),
+                        TextColor(variant.text_color(false).into()),
                     ));
                 }
             });
@@ -427,37 +443,24 @@ fn handle_hover(
         (
             &ButtonVariant,
             &Hovered,
+            Has<InteractionDisabled>,
             &mut BackgroundColor,
             &mut BorderColor,
         ),
         (Changed<Hovered>, With<EditorButton>),
     >,
 ) {
-    for (variant, hovered, mut bg, mut border) in &mut buttons {
+    for (variant, hovered, interaction_disabled, mut bg, mut border) in &mut buttons {
         let is_hovered = hovered.get();
         bg.0 = variant
-            .bg_color(is_hovered)
-            .with_alpha(variant.bg_opacity(is_hovered))
+            .bg_color(is_hovered, interaction_disabled)
+            .with_alpha(variant.bg_opacity(is_hovered, interaction_disabled))
             .into();
         *border = BorderColor::all(
             variant
-                .border_color()
-                .with_alpha(variant.border_opacity(is_hovered)),
+                .border_color(interaction_disabled)
+                .with_alpha(variant.border_opacity(is_hovered, interaction_disabled)),
         );
-    }
-}
-
-fn handle_button_click(
-    interactions: Query<
-        (Entity, &Interaction, &ButtonVariant),
-        (Changed<Interaction>, With<EditorButton>),
-    >,
-    mut commands: Commands,
-) {
-    for (entity, interaction, variant) in &interactions {
-        if *interaction == Interaction::Pressed && *variant != ButtonVariant::Disabled {
-            commands.trigger(ButtonClickEvent { entity });
-        }
     }
 }
 
@@ -471,7 +474,7 @@ pub fn icon_button(props: IconButtonProps, icon_font: &Handle<Font>) -> impl Bun
         alpha,
     } = props;
     let alpha = alpha.unwrap_or(1.0);
-    let icon_color = color.unwrap_or(variant.text_color()).with_alpha(alpha);
+    let icon_color = color.unwrap_or(variant.text_color(false)).with_alpha(alpha);
 
     (
         button_base(variant, size, false, FlexDirection::Row),
@@ -493,12 +496,12 @@ pub fn set_button_variant(
     border: &mut BorderColor,
 ) {
     bg.0 = variant
-        .bg_color(false)
-        .with_alpha(variant.bg_opacity(false))
+        .bg_color(false, false)
+        .with_alpha(variant.bg_opacity(false, false))
         .into();
     *border = BorderColor::all(
         variant
-            .border_color()
-            .with_alpha(variant.border_opacity(false)),
+            .border_color(false)
+            .with_alpha(variant.border_opacity(false, false)),
     );
 }

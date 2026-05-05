@@ -29,45 +29,34 @@ impl Plugin for SplitPanelPlugin {
         app.add_observer(on_panel_added)
             .add_observer(on_handle_added)
             .add_observer(on_handle_drag_start)
-            .add_observer(on_handle_drag_end)
-            .add_systems(Startup, setup_panel_watcher);
+            .add_observer(on_handle_drag_end);
     }
 }
 
-fn setup_panel_watcher(mut commands: Commands) {
-    commands
-        .spawn(NotifyChanged::<Panel>::default())
-        .observe(on_panel_mutated);
-}
-
 fn on_panel_added(
-    trigger: On<Add, Panel>,
+    add: On<Add, Panel>,
     child_of: Query<&ChildOf>,
     mut queries: ParamSet<(
         Query<(&Node, &Children), With<PanelGroup>>,
         Query<(&mut Node, &Panel)>,
     )>,
 ) {
-    let entity = trigger.event_target();
-    let Ok(&ChildOf(parent)) = child_of.get(entity) else {
+    let Ok(&ChildOf(parent)) = child_of.get(add.entity) else {
         return;
     };
     recalculate_group(parent, &mut queries);
 }
 
-fn on_panel_mutated(
-    trigger: On<Mutation<Panel>>,
-    child_of: Query<&ChildOf>,
+fn on_panel_changed(
+    parents: Populated<&ChildOf, Changed<Panel>>,
     mut queries: ParamSet<(
         Query<(&Node, &Children), With<PanelGroup>>,
         Query<(&mut Node, &Panel)>,
     )>,
 ) {
-    let entity = trigger.mutated;
-    let Ok(&ChildOf(parent)) = child_of.get(entity) else {
-        return;
-    };
-    recalculate_group(parent, &mut queries);
+    for &ChildOf(parent) in parents {
+        recalculate_group(parent, &mut queries);
+    }
 }
 
 fn recalculate_group(

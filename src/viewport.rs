@@ -158,8 +158,8 @@ fn handle_viewport_drop(
     event: On<Pointer<DragDrop>>,
     file_items: Query<&FileBrowserItem>,
     parents: Query<&ChildOf>,
-    windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
+    windows: Single<&Window>,
+    camera_query: Single<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     snap_settings: Res<crate::snapping::SnapSettings>,
     mut commands: Commands,
@@ -180,15 +180,11 @@ fn handle_viewport_drop(
     }
 
     // Get cursor position and raycast to ground plane
-    let Ok(window) = windows.single() else {
-        return;
-    };
+    let window = windows.into_inner();
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
-    let Ok((camera, cam_tf)) = camera_query.single() else {
-        return;
-    };
+    let (camera, cam_tf) = camera_query.into_inner();
 
     let position =
         cursor_to_ground_plane(cursor_pos, camera, cam_tf, &viewport_query).unwrap_or(Vec3::ZERO);

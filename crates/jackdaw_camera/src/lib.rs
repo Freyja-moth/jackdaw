@@ -4,6 +4,9 @@ use bevy::{
 };
 use jackdaw_commands::keybinds::{EditorAction, KeybindRegistry};
 
+#[derive(Component)]
+pub struct JackdawCamera;
+
 pub struct JackdawCameraPlugin;
 
 impl Plugin for JackdawCameraPlugin {

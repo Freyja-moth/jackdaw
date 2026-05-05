@@ -13,8 +13,9 @@
 use bevy::prelude::*;
 use bevy::ui::ComputedNode;
 use bevy::ui::ui_transform::UiGlobalTransform;
+use bevy::ui_widgets::Activate;
 use jackdaw_feathers::button::{
-    ButtonClickEvent, ButtonProps, ButtonSize, ButtonVariant, IconButtonProps, button, icon_button,
+    ButtonProps, ButtonSize, ButtonVariant, IconButtonProps, button, icon_button,
 };
 use jackdaw_feathers::icons::IconFont;
 use jackdaw_feathers::tokens;
@@ -934,7 +935,7 @@ pub fn update_playhead_position(
 
 /// Route transport button clicks into the animation message channel.
 pub fn handle_transport_button_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     play: Query<(), With<TimelinePlayButton>>,
     pause: Query<(), With<TimelinePauseButton>>,
     stop: Query<(), With<TimelineStopButton>>,
@@ -960,7 +961,7 @@ pub fn handle_transport_button_click(
 /// "which keyframe component type to spawn" (a concrete Rust type) —
 /// mirroring the dispatch in `compile.rs`.
 pub fn handle_add_keyframe_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     buttons: Query<&TimelineAddKeyframeButton>,
     mut commands: Commands,
 ) {

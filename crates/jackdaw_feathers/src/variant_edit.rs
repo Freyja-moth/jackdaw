@@ -1,8 +1,9 @@
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 use lucide_icons::Icon;
 
-use crate::button::{ButtonClickEvent, ButtonProps, ButtonVariant, EditorButton, button};
+use crate::button::{ButtonProps, ButtonVariant, EditorButton, button};
 use crate::combobox::{ComboBoxChangeEvent, ComboBoxOptionData, combobox_with_selected};
 use crate::icons::{EditorFont, IconFont};
 use crate::inspector_field::path_to_label;
@@ -240,7 +241,7 @@ fn sync_variant_edit_button(
 }
 
 fn handle_variant_edit_click(
-    trigger: On<ButtonClickEvent>,
+    trigger: On<Activate>,
     mut commands: Commands,
     editor_font: Res<EditorFont>,
     icon_font: Res<IconFont>,

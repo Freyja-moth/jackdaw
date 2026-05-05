@@ -203,13 +203,11 @@ pub fn build_remote_inspector_displays(
     names: Query<&Name>,
     icon_font: Res<IconFont>,
     editor_font: Res<EditorFont>,
-    inspector_query: Query<(Entity, &RemoteInspectorNeedsRebuild), With<RemoteInspector>>,
+    inspector_query: Single<(Entity, &RemoteInspectorNeedsRebuild), With<RemoteInspector>>,
     entity_query: Query<(&Archetype, EntityRef)>,
     materials: Res<Assets<StandardMaterial>>,
 ) {
-    let Ok((inspector_entity, rebuild)) = inspector_query.single() else {
-        return;
-    };
+    let (inspector_entity, rebuild) = inspector_query.into_inner();
 
     let proxy_entity = rebuild.proxy_entity;
     let fallback_components = rebuild.fallback_components.clone();

@@ -1,12 +1,11 @@
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
+use bevy::ui_widgets::Activate;
 use bevy::window::PrimaryWindow;
 use lucide_icons::Icon;
 
-use crate::button::{
-    ButtonClickEvent, ButtonVariant, IconButtonProps, icon_button, set_button_variant,
-};
+use crate::button::{ButtonVariant, IconButtonProps, icon_button, set_button_variant};
 use crate::tokens::{
     BACKGROUND_COLOR, BORDER_COLOR, CORNER_RADIUS_LG, TEXT_DISPLAY_COLOR, TEXT_SIZE,
 };
@@ -483,7 +482,7 @@ fn cleanup_tracked_popovers(
 }
 
 fn handle_popover_close_click(
-    trigger: On<ButtonClickEvent>,
+    trigger: On<Activate>,
     mut commands: Commands,
     close_buttons: Query<&PopoverCloseButton>,
 ) {

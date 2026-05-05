@@ -17,8 +17,8 @@ pub struct EditorFontItalic(pub Handle<Font>);
 
 pub struct IconFontPlugin;
 
-const FIRA_SANS_BYTES: &[u8] = include_bytes!("../fonts/FiraSans-Regular.ttf");
-const FIRA_SANS_ITALIC_BYTES: &[u8] = include_bytes!("../fonts/FiraSans-Italic.ttf");
+const FIRA_SANS_BYTES: &[u8] = &[]; //include_bytes!("../fonts/FiraSans-Regular.ttf");
+const FIRA_SANS_ITALIC_BYTES: &[u8] = &[]; //include_bytes!("../fonts/FiraSans-Italic.ttf");
 
 impl Plugin for IconFontPlugin {
     fn build(&self, app: &mut App) {

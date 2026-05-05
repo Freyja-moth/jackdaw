@@ -1,8 +1,9 @@
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 use lucide_icons::Icon;
 
 use crate::button::{
-    ButtonClickEvent, ButtonProps, ButtonSize, ButtonVariant, IconButtonProps, button, icon_button,
+    ButtonProps, ButtonSize, ButtonVariant, IconButtonProps, button, icon_button,
     set_button_variant,
 };
 use crate::popover::{EditorPopover, PopoverPlacement, PopoverProps, popover};
@@ -256,7 +257,7 @@ fn setup_combobox(
 }
 
 fn handle_trigger_click(
-    trigger: On<ButtonClickEvent>,
+    trigger: On<Activate>,
     mut commands: Commands,
     triggers: Query<&ComboBoxTrigger>,
     configs: Query<&ComboBoxConfig>,
@@ -396,7 +397,7 @@ fn handle_combobox_popover_closed(
 }
 
 fn handle_option_click(
-    trigger: On<ButtonClickEvent>,
+    trigger: On<Activate>,
     mut commands: Commands,
     options: Query<&ComboBoxOption>,
     mut configs: Query<&mut ComboBoxConfig>,

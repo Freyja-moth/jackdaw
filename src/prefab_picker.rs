@@ -7,6 +7,7 @@ use jackdaw_feathers::{
     text_edit::{self, TextEditProps, TextEditValue},
     tokens,
 };
+use walkdir::WalkDir;
 
 pub struct PrefabPickerPlugin;
 
@@ -55,8 +56,7 @@ pub fn open_prefab_picker(world: &mut World) {
         .map(|p| p.assets_dir())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("assets"));
 
-    let mut prefabs: Vec<(String, String)> = Vec::new(); // (path, display_name)
-    scan_jsn_files(&assets_dir, &assets_dir, &mut prefabs);
+    let mut prefabs = scan_jsn_files(&assets_dir, &assets_dir);
     prefabs.sort_by_key(|a| a.1.to_lowercase());
 
     // Find the viewport entity to parent the picker to
@@ -225,63 +225,53 @@ pub fn open_prefab_picker(world: &mut World) {
 }
 
 /// Recursively scan a directory for .jsn scene files.
-fn scan_jsn_files(dir: &PathBuf, _assets_root: &PathBuf, results: &mut Vec<(String, String)>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        warn!("Prefab picker: failed to read directory {:?}", dir);
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            scan_jsn_files(&path, _assets_root, results);
-        } else if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("jsn"))
-        {
-            // Skip project.jsn files, they aren't scenes.
-            if path
+fn scan_jsn_files(dir: &PathBuf, _assets_root: &PathBuf) -> Vec<(String, String)> {
+    WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            !entry
+                .path()
                 .file_name()
-                .is_some_and(|n| n.eq_ignore_ascii_case("project.jsn"))
-            {
-                continue;
-            }
-
-            let path_str = path.to_string_lossy().to_string();
+                .is_some_and(|e| e.eq_ignore_ascii_case("project.jsn"))
+                || entry
+                    .path()
+                    .file_stem()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+        })
+        .map(|entry| {
+            let path_str = entry.path().to_string_lossy().to_string();
 
             // Try to read metadata name from the file without deserializing the
             // entire scene (which can be very large for complex scenes).
-            let display_name = std::fs::read_to_string(&path)
+            let display_name = std::fs::read_to_string(entry.path())
                 .ok()
                 .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-                .and_then(|v| {
-                    v.get("metadata")?
-                        .get("name")?
-                        .as_str()
-                        .map(|s| s.to_string())
-                })
-                .filter(|name| !name.is_empty() && name != "Untitled")
+                .and_then(|v| v.get("metadata")?.get("name").map(ToString::to_string))
+                .filter(|name| !name.is_empty() && *name != "Untitled")
                 .unwrap_or_else(|| {
-                    path.file_stem()
+                    entry
+                        .path()
+                        .file_stem()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| "Unknown".to_string())
                 });
 
             info!("Prefab picker: found {:?} -> {:?}", path_str, display_name);
-            results.push((path_str, display_name));
-        }
-    }
+
+            (path_str, display_name)
+        })
+        .collect()
 }
 
 /// Close the prefab picker when Escape is pressed or when clicking outside.
 fn close_prefab_picker_on_dismiss(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    picker: Query<(Entity, &Hovered), With<PrefabPicker>>,
+    picker: Single<(Entity, &Hovered), With<PrefabPicker>>,
     mut commands: Commands,
 ) {
-    let Ok((entity, hovered)) = picker.single() else {
-        return;
-    };
+    let (entity, hovered) = picker.into_inner();
     let esc = keyboard.just_pressed(KeyCode::Escape);
     let clicked_outside = mouse.get_just_pressed().next().is_some() && !hovered.get();
     if esc || clicked_outside {
@@ -291,15 +281,13 @@ fn close_prefab_picker_on_dismiss(
 
 /// Filter the prefab picker list based on search input.
 fn filter_prefab_picker(
-    search_query: Query<&TextEditValue, (With<PrefabPickerSearch>, Changed<TextEditValue>)>,
-    mut entries: Query<(Entity, &PrefabPickerEntry, &mut Node), Without<PrefabPickerSearch>>,
+    search_query: Single<&TextEditValue, (With<PrefabPickerSearch>, Changed<TextEditValue>)>,
+    mut entries: Query<(&PrefabPickerEntry, &mut Node), Without<PrefabPickerSearch>>,
 ) {
-    let Ok(search) = search_query.single() else {
-        return;
-    };
+    let search = search_query.into_inner();
     let filter = search.0.trim().to_lowercase();
 
-    for (_entity, entry, mut node) in &mut entries {
+    for (entry, mut node) in &mut entries {
         let matches = filter.is_empty() || entry.display_name.to_lowercase().contains(&filter);
         node.display = if matches {
             Display::Flex

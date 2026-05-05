@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use bevy::prelude::*;
+use bevy::{prelude::*, ui_widgets::Activate};
 use jackdaw_commands::keybinds::{EditorAction, Keybind, KeybindRegistry};
 use jackdaw_feathers::{
-    button::{ButtonClickEvent, ButtonProps, ButtonVariant, button},
+    button::{ButtonProps, ButtonVariant, button},
     dialog::{
         CloseDialogEvent, DialogActionEvent, DialogChildrenSlot, EditorDialog, OpenDialogEvent,
     },
@@ -354,7 +354,7 @@ fn populate_keybind_dialog(
 }
 
 fn on_key_filter_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     key_filter_buttons: Query<&ChildOf, With<KeyFilterButton>>,
     parents: Query<&ChildOf>,
     dialogs: Query<(), With<EditorDialog>>,
@@ -536,7 +536,7 @@ fn apply_keybind_filter(
 }
 
 fn on_rebind_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     rebind_buttons: Query<(&KeybindRebindButton, &ChildOf)>,
     parents: Query<&ChildOf>,
     dialogs: Query<(), With<EditorDialog>>,
@@ -757,7 +757,7 @@ fn capture_keybind_recording(
 }
 
 fn on_reset_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     reset_buttons: Query<(&KeybindResetButton, &ChildOf)>,
     parents: Query<&ChildOf>,
     dialogs: Query<(), With<EditorDialog>>,
@@ -795,7 +795,7 @@ fn on_reset_click(
 }
 
 fn on_reset_all_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     reset_all_buttons: Query<&ChildOf, With<KeybindResetAllButton>>,
     parents: Query<&ChildOf>,
     dialogs: Query<(), With<EditorDialog>>,

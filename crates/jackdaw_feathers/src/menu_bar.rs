@@ -1,31 +1,16 @@
 use bevy::{feathers::theme::ThemedText, prelude::*, ui::ui_transform::UiGlobalTransform};
 use jackdaw_widgets::menu_bar::{
-    MenuAction, MenuBar, MenuBarDropdown, MenuBarDropdownItem, MenuBarItem, MenuBarState,
+    MenuBar, MenuBarDropdown, MenuBarDropdownItem, MenuBarItem, MenuBarState,
 };
 
-use crate::button::{ButtonClickEvent, ButtonProps, ButtonVariant, button};
+use crate::button::{ButtonProps, ButtonVariant, button};
 use crate::tokens;
 use crate::tooltip::Tooltip;
 
 pub fn plugin(app: &mut App) {
-    app.add_observer(on_dropdown_item_click)
-        .add_observer(on_menu_bar_item_click)
+    app.add_observer(on_menu_bar_item_click)
         .add_observer(on_menu_bar_item_over)
         .add_observer(on_menu_bar_item_out);
-}
-
-/// When a dropdown item is clicked, fire the MenuAction.
-fn on_dropdown_item_click(
-    event: On<ButtonClickEvent>,
-    items: Query<&MenuBarDropdownItem>,
-    mut commands: Commands,
-) {
-    let Ok(item) = items.get(event.entity) else {
-        return;
-    };
-    commands.trigger(MenuAction {
-        action: item.action.clone(),
-    });
 }
 
 /// Handle click on a MenuBarItem: find the item by walking up from the event target.
@@ -228,9 +213,7 @@ fn spawn_dropdown(commands: &mut Commands, x: f32, y: f32, actions: &[(String, S
         }
 
         commands.entity(dropdown).with_child((
-            MenuBarDropdownItem {
-                action: action.clone(),
-            },
+            MenuBarDropdownItem,
             button(
                 ButtonProps::new(label.clone())
                     .with_variant(ButtonVariant::Ghost)

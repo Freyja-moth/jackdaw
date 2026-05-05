@@ -117,7 +117,7 @@ fn check_project_watcher(
 /// Rebuild the root-level tree when needs_refresh is set.
 fn refresh_project_tree(
     mut state: ResMut<ProjectFilesState>,
-    tree_query: Query<(Entity, Option<&Children>), With<ProjectFilesTree>>,
+    tree_query: Single<(Entity, Option<&Children>), With<ProjectFilesTree>>,
     mut commands: Commands,
     icon_font: Option<Res<IconFont>>,
 ) {
@@ -126,9 +126,7 @@ fn refresh_project_tree(
     }
     state.needs_refresh = false;
 
-    let Ok((tree_entity, existing_children)) = tree_query.single() else {
-        return;
-    };
+    let (tree_entity, existing_children) = tree_query.into_inner();
 
     // Clear existing children
     if let Some(children) = existing_children {

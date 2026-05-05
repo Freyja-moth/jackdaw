@@ -2,9 +2,10 @@ use std::time::Duration;
 
 use bevy::color::palettes::tailwind;
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 use lucide_icons::Icon;
 
-use crate::button::{ButtonClickEvent, ButtonVariant, IconButtonProps, icon_button};
+use crate::button::{ButtonVariant, IconButtonProps, icon_button};
 use crate::separator::{SeparatorProps, separator};
 use crate::tokens::{CORNER_RADIUS, TEXT_BODY_COLOR, TEXT_SIZE};
 
@@ -119,7 +120,7 @@ pub fn toast(
 }
 
 fn handle_toast_close(
-    trigger: On<ButtonClickEvent>,
+    trigger: On<Activate>,
     parents: Query<&ChildOf>,
     toasts: Query<Entity, With<EditorToast>>,
     mut commands: Commands,

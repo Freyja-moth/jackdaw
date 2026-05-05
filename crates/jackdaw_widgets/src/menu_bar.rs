@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, ui_widgets::Activate};
 
 pub struct MenuBarPlugin;
 
@@ -28,9 +28,7 @@ pub struct MenuBarDropdown;
 
 /// Marker on individual items inside a menu dropdown.
 #[derive(Component)]
-pub struct MenuBarDropdownItem {
-    pub action: String,
-}
+pub struct MenuBarDropdownItem;
 
 /// Tracks which menu is currently open.
 #[derive(Resource, Default)]
@@ -44,7 +42,14 @@ pub struct MenuBarState {
 /// Fired when a menu item is clicked.
 #[derive(Event, Debug, Clone)]
 pub struct MenuAction {
-    pub action: String,
+    pub action: Entity,
+}
+
+/// When a dropdown item is clicked, fire the MenuAction.
+fn on_dropdown_item_click(event: On<Activate>, mut commands: Commands) {
+    // commands.trigger(MenuAction {
+    // action: item.action.clone(),
+    // });
 }
 
 fn close_menu_on_action(

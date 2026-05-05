@@ -1,7 +1,8 @@
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 use jackdaw_widgets::context_menu::{ContextMenuAction, ContextMenuItem};
 
-use crate::button::{ButtonClickEvent, ButtonProps, ButtonVariant, button};
+use crate::button::{ButtonProps, ButtonVariant, button};
 use crate::tokens;
 
 pub fn plugin(app: &mut App) {
@@ -9,7 +10,7 @@ pub fn plugin(app: &mut App) {
 }
 
 fn on_context_menu_item_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     items: Query<&ContextMenuItem>,
     mut commands: Commands,
 ) {

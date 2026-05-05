@@ -7,11 +7,12 @@
 //! `spawn_typed_keyframe` and `compile::build_curve_for_track`.
 
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 use jackdaw_animation::{
     AnimationTrack, Clip, F32Keyframe, QuatKeyframe, SelectedClip, TimelineCursor, TimelineDirty,
     Vec3Keyframe,
 };
-use jackdaw_feathers::button::{ButtonClickEvent, ButtonProps, ButtonSize, ButtonVariant, button};
+use jackdaw_feathers::button::{ButtonProps, ButtonSize, ButtonVariant, button};
 use jackdaw_feathers::icons::Icon;
 
 use super::InspectorFieldRow;
@@ -108,7 +109,7 @@ pub fn decorate_animatable_fields(
 /// exist for the bound property and spawn a keyframe at the current
 /// cursor time.
 pub fn on_diamond_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     buttons: Query<&AnimDiamondButton>,
     mut commands: Commands,
 ) {

@@ -1,5 +1,6 @@
 use bevy::picking::prelude::Pickable;
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 
 use super::color_math::hsv_to_rgb;
 use super::controls::{
@@ -20,7 +21,7 @@ use super::{
     TriggerSwatchMaterial,
 };
 
-use crate::button::{ButtonClickEvent, ButtonProps, ButtonVariant, button};
+use crate::button::{ButtonProps, ButtonVariant, button};
 use crate::icons::{EditorFont, IconFont};
 use crate::popover::{
     PopoverHeaderProps, PopoverPlacement, PopoverProps, PopoverTracker, activate_trigger,
@@ -174,7 +175,7 @@ pub(super) fn setup_trigger_swatch(
 }
 
 pub(super) fn handle_trigger_click(
-    trigger: On<ButtonClickEvent>,
+    trigger: On<Activate>,
     mut commands: Commands,
     editor_font: Res<EditorFont>,
     icon_font: Res<IconFont>,

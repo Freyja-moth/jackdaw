@@ -1514,9 +1514,9 @@ pub fn inspector_components_content(icon_font: Handle<Font>) -> impl Bundle {
                             ),
                         ],
                         observe(|click: On<Pointer<Click>>, mut commands: Commands| {
-                            commands.trigger(jackdaw_feathers::button::ButtonClickEvent {
-                                entity: click.event_target(),
-                            });
+                            // commands.trigger(jackdaw_feathers::button::ButtonClickEvent {
+                            // entity: click.event_target(),
+                            // });
                         },),
                     ),
                 ],

@@ -226,7 +226,7 @@ fn draw_alignment_guides(
     modal_state: Res<ModalTransformState>,
     viewport_drag: Res<ViewportDragState>,
     transforms: Query<&GlobalTransform>,
-    camera_query: Query<&GlobalTransform, With<crate::viewport::MainViewportCamera>>,
+    camera_query: Single<&GlobalTransform, With<crate::viewport::MainViewportCamera>>,
     selected: Query<(Entity, &GlobalTransform, Option<&BrushMeshCache>), With<Selected>>,
     mut selected_transforms: Query<&mut Transform, With<Selected>>,
     children_query: Query<&Children>,
@@ -247,10 +247,7 @@ fn draw_alignment_guides(
         return;
     };
 
-    let cam_tf = match camera_query.single() {
-        Ok(ct) => ct,
-        Err(_) => return,
-    };
+    let cam_tf = camera_query.into_inner();
     let cam_distance = cam_tf.translation().distance(drag_pos);
     let cam_forward = cam_tf.forward().as_vec3();
 

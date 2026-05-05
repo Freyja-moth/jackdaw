@@ -1,3 +1,4 @@
+pub mod backdrop;
 pub mod collapsible;
 pub mod context_menu;
 pub mod file_browser;

@@ -1,9 +1,8 @@
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 use lucide_icons::Icon;
 
-use crate::button::{
-    ButtonClickEvent, ButtonProps, ButtonVariant, IconButtonProps, button, icon_button,
-};
+use crate::button::{ButtonProps, ButtonVariant, IconButtonProps, button, icon_button};
 use crate::icons::EditorFont;
 use crate::tokens::{
     BACKGROUND_COLOR, BORDER_COLOR, TEXT_DISPLAY_COLOR, TEXT_MUTED_COLOR, TEXT_SIZE_LG,
@@ -490,7 +489,7 @@ fn on_close_dialog(
 }
 
 fn on_action_button_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     action_buttons: Query<&ChildOf, With<DialogActionButton>>,
     parents: Query<&ChildOf>,
     dialogs: Query<Entity, With<EditorDialog>>,
@@ -509,7 +508,7 @@ fn on_action_button_click(
 }
 
 fn on_secondary_action_button_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     secondary_buttons: Query<&ChildOf, With<DialogSecondaryActionButton>>,
     parents: Query<&ChildOf>,
     dialogs: Query<Entity, With<EditorDialog>>,
@@ -528,7 +527,7 @@ fn on_secondary_action_button_click(
 }
 
 fn on_cancel_button_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     cancel_buttons: Query<&ChildOf, With<DialogCancelButton>>,
     parents: Query<&ChildOf>,
     dialogs: Query<Entity, With<EditorDialog>>,
@@ -544,7 +543,7 @@ fn on_cancel_button_click(
 }
 
 fn on_close_button_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     close_buttons: Query<&ChildOf, With<DialogCloseButton>>,
     parents: Query<&ChildOf>,
     dialogs: Query<Entity, With<EditorDialog>>,

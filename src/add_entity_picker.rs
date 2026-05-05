@@ -319,9 +319,9 @@ pub fn open_add_entity_picker(world: &mut World) {
                             // Route through the menu-bar dispatch path
                             // so the toolbar Add menu and this picker
                             // share one code path.
-                            commands.trigger(jackdaw_widgets::menu_bar::MenuAction {
-                                action: action.clone(),
-                            });
+                            // commands.trigger(jackdaw_widgets::menu_bar::MenuAction {
+                            // action: action.clone(),
+                            // });
                             commands.queue(|world: &mut World| {
                                 let pickers: Vec<Entity> = world
                                     .query_filtered::<Entity, With<AddEntityPicker>>()

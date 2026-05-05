@@ -4,11 +4,12 @@
 use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, futures_lite::future},
+    ui_widgets::Activate,
 };
 use jackdaw_api::prelude::ExtensionKind;
 use jackdaw_api_internal::lifecycle::{Extension, ExtensionCatalog};
 use jackdaw_feathers::{
-    button::{ButtonClickEvent, ButtonProps, ButtonSize, ButtonVariant, button},
+    button::{ButtonProps, ButtonSize, ButtonVariant, button},
     checkbox::{CheckboxCommitEvent, CheckboxProps, checkbox},
     dialog::{CloseDialogEvent, DialogChildrenSlot, OpenDialogEvent},
     icons::{EditorFont, Icon, IconFont},
@@ -308,7 +309,7 @@ fn on_extension_checkbox_commit(
 /// Skips if a picker is already in flight (rfd can't run two at
 /// once on some platforms, and it'd be confusing UX).
 fn on_install_button_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     buttons: Query<(), With<InstallFromFileButton>>,
     mut commands: Commands,
 ) {

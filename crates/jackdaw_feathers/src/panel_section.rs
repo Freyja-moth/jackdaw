@@ -1,7 +1,8 @@
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 use lucide_icons::Icon;
 
-use crate::button::{ButtonClickEvent, ButtonVariant, IconButtonProps, icon_button};
+use crate::button::{ButtonVariant, IconButtonProps, icon_button};
 use crate::icons::IconFont;
 use crate::tokens::{BORDER_COLOR, TEXT_DISPLAY_COLOR, TEXT_SIZE};
 
@@ -192,20 +193,20 @@ fn setup_panel_section_buttons(
 }
 
 fn on_add_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     add_buttons: Query<&PanelSectionAddButton>,
     mut commands: Commands,
 ) {
     let Ok(add_button) = add_buttons.get(event.entity) else {
         return;
     };
-    commands.trigger(ButtonClickEvent {
-        entity: add_button.0,
-    });
+    // commands.trigger(ButtonClickEvent {
+    // entity: add_button.0,
+    // });
 }
 
 fn on_collapse_click(
-    event: On<ButtonClickEvent>,
+    event: On<Activate>,
     collapse_buttons: Query<&PanelSectionCollapseButton>,
     mut sections: Query<(&mut Collapsed, &Children), With<EditorPanelSection>>,
     mut nodes: Query<&mut Node, Without<PanelSectionHeader>>,

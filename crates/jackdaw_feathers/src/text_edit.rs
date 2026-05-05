@@ -2,6 +2,7 @@ use bevy::input_focus::InputFocus;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::text::{FontFeatureTag, FontFeatures};
+use bevy::ui::Pressed;
 use bevy_ui_text_input::actions::{TextInputAction, TextInputEdit};
 use bevy_ui_text_input::*;
 // Re-export key types from bevy_ui_text_input for consumers
@@ -811,9 +812,9 @@ fn handle_numeric_increment(
 fn handle_drag_value(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
+    windows: Single<&Window>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut drag_hitboxes: Query<(Entity, &mut DragHitbox, &Interaction, &ChildOf)>,
+    mut drag_hitboxes: Query<(Entity, &mut DragHitbox, Has<Pressed>, &ChildOf)>,
     wrappers: Query<&TextEditWrapper>,
     mut text_edits: Query<
         (
@@ -826,28 +827,29 @@ fn handle_drag_value(
         With<EditorTextEdit>,
     >,
 ) {
-    let Ok(window) = windows.single() else { return };
+    let window = windows.into_inner();
     let cursor_pos = window.cursor_position();
 
-    for (entity, mut hitbox, interaction, child_of) in &mut drag_hitboxes {
-        let Ok(wrapper) = wrappers.get(child_of.parent()) else {
+    for (entity, mut hitbox, pressed, &ChildOf(parent)) in &mut drag_hitboxes {
+        let Ok(wrapper) = wrappers.get(parent) else {
             continue;
         };
         let input_entity = wrapper.0;
 
-        if mouse.just_pressed(MouseButton::Left) && *interaction == Interaction::Pressed {
-            if let Some(pos) = cursor_pos {
-                let Ok((_, buffer, _, suffix, _)) = text_edits.get(input_entity) else {
-                    continue;
-                };
-                hitbox.dragging = true;
-                hitbox.start_x = pos.x;
-                hitbox.start_value = parse_numeric_value(&buffer.get_text(), suffix);
-                commands
-                    .entity(entity)
-                    .insert(ActiveCursor(bevy::window::SystemCursorIcon::ColResize));
-                commands.entity(child_of.parent()).insert(TextEditDragging);
-            }
+        if mouse.just_pressed(MouseButton::Left)
+            && pressed
+            && let Some(pos) = cursor_pos
+        {
+            let Ok((_, buffer, _, suffix, _)) = text_edits.get(input_entity) else {
+                continue;
+            };
+            hitbox.dragging = true;
+            hitbox.start_x = pos.x;
+            hitbox.start_value = parse_numeric_value(&buffer.get_text(), suffix);
+            commands
+                .entity(entity)
+                .insert(ActiveCursor(bevy::window::SystemCursorIcon::ColResize));
+            commands.entity(parent).insert(TextEditDragging);
         }
 
         if mouse.just_released(MouseButton::Left) {
@@ -859,7 +861,6 @@ fn handle_drag_value(
                         text,
                     });
                 }
-                let parent = child_of.parent();
                 commands.queue(move |world: &mut World| {
                     if let Ok(mut ec) = world.get_entity_mut(parent) {
                         ec.remove::<TextEditDragging>();
@@ -885,11 +886,11 @@ fn handle_drag_value(
                     || keyboard.pressed(KeyCode::AltLeft)
                     || keyboard.pressed(KeyCode::AltRight);
 
-                let (amount, sensitivity) = match (*variant, alt_mode) {
-                    (TextEditVariant::NumericI32, false) => (1.0, 5.0),
-                    (TextEditVariant::NumericI32, true) => (10.0, 10.0),
-                    (_, false) => (0.1, 5.0),
-                    (_, true) => (1.0, 10.0),
+                let (amount, sensitivity) = match *variant {
+                    TextEditVariant::NumericI32 if alt_mode => (10.0, 10.0),
+                    TextEditVariant::NumericI32 => (1.0, 5.0),
+                    _ if alt_mode => (1.0, 10.0),
+                    _ => (0.1, 5.0),
                 };
 
                 let steps = ((pos.x - hitbox.start_x) / sensitivity).floor() as f64;

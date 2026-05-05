@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use super::InspectorDirty;
 
+use bevy::ui_widgets::Activate;
 use bevy::{
     ecs::{
         archetype::Archetype,
@@ -44,7 +45,7 @@ struct ComponentInfo {
 
 /// Handle click on the "+" button to open the component picker.
 pub(crate) fn on_add_component_button_click(
-    event: On<jackdaw_feathers::button::ButtonClickEvent>,
+    event: On<Activate>,
     add_buttons: Query<&ChildOf, With<AddComponentButton>>,
     existing_pickers: Query<Entity, With<ComponentPicker>>,
     mut commands: Commands,

@@ -101,9 +101,9 @@ fn modal_activate(
     gizmo_drag: Res<GizmoDragState>,
     mut modal: ResMut<ModalTransformState>,
     mut gizmo_mode: ResMut<GizmoMode>,
-    windows: Query<&Window>,
+    windows: Single<&Window>,
     mut cursor_query: Query<&mut CursorOptions, With<Window>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
+    camera_query: Single<&Camera, With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     edit_mode: Res<crate::brush::EditMode>,
     draw_state: Res<crate::draw_brush::DrawBrushState>,
@@ -139,15 +139,11 @@ fn modal_activate(
         return;
     };
 
-    let Ok(window) = windows.single() else {
-        return;
-    };
+    let window = windows.into_inner();
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
-    let Ok((camera, _)) = camera_query.single() else {
-        return;
-    };
+    let camera = camera_query.into_inner();
     let viewport_cursor =
         window_to_viewport_cursor(cursor_pos, camera, &viewport_query).unwrap_or(cursor_pos);
 
@@ -211,27 +207,25 @@ fn modal_constrain(
 fn modal_update(
     modal: Res<ModalTransformState>,
     mut transforms: Query<&mut Transform, With<Selected>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
-    windows: Query<&Window>,
+    camera_query: Single<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
+    windows: Single<&Window>,
     keyboard: Res<ButtonInput<KeyCode>>,
     snap_settings: Res<SnapSettings>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
 ) {
+    let window = windows.into_inner();
+    let (camera, cam_tf) = camera_query.into_inner();
+
     let Some(ref active) = modal.active else {
         return;
     };
     let Ok(mut transform) = transforms.get_mut(active.entity) else {
         return;
     };
-    let Ok(window) = windows.single() else {
-        return;
-    };
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
-    let Ok((camera, cam_tf)) = camera_query.single() else {
-        return;
-    };
+
     let viewport_cursor =
         window_to_viewport_cursor(cursor_pos, camera, &viewport_query).unwrap_or(cursor_pos);
     let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
@@ -469,8 +463,8 @@ fn snap_toggle(
 fn viewport_drag_detect(
     mouse: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
+    windows: Single<&Window>,
+    camera_query: Single<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     selection: Res<Selection>,
     transforms: Query<(&GlobalTransform, &Transform)>,
@@ -531,15 +525,11 @@ fn viewport_drag_detect(
         return;
     };
 
-    let Ok(window) = windows.single() else {
-        return;
-    };
+    let window = windows.into_inner();
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
-    let Ok((camera, cam_tf)) = camera_query.single() else {
-        return;
-    };
+    let (camera, cam_tf) = camera_query.into_inner();
 
     let Some(viewport_cursor) = window_to_viewport_cursor(cursor_pos, camera, &viewport_query)
     else {
@@ -584,8 +574,8 @@ fn viewport_drag_detect(
 
 fn viewport_drag_update(
     mouse: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
+    windows: Single<&Window>,
+    camera_query: Single<(&Camera, &GlobalTransform), With<MainViewportCamera>>,
     viewport_query: Query<(&ComputedNode, &UiGlobalTransform), With<SceneViewport>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     snap_settings: Res<SnapSettings>,
@@ -609,9 +599,7 @@ fn viewport_drag_update(
         return;
     }
 
-    let Ok(window) = windows.single() else {
-        return;
-    };
+    let window = windows.into_inner();
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
@@ -646,9 +634,7 @@ fn viewport_drag_update(
     let Some(ref active) = drag_state.active else {
         return;
     };
-    let Ok((camera, cam_tf)) = camera_query.single() else {
-        return;
-    };
+    let (camera, cam_tf) = camera_query.into_inner();
     let ctrl = keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let alt = keyboard.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
     let shift = keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);

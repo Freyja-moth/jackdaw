@@ -1,4 +1,7 @@
-use std::{path::{Path, PathBuf}, fs};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use bevy::prelude::*;
 use jackdaw_api_internal::paths::recent_file_path;
@@ -44,8 +47,8 @@ pub fn read_recent_projects() -> RecentProjects {
     let Ok(data) = std::fs::read_to_string(&path) else {
         return RecentProjects::default();
     };
-    
-    let mut projects = serde_json::from_str(&data).unwrap_or_default();
+
+    let mut projects: Vec<RecentEntry> = serde_json::from_str(&data).unwrap_or_default();
 
     projects.projects.retain(|entry| fs::exists(entry.path));
 

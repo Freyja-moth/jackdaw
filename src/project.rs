@@ -50,7 +50,7 @@ pub fn read_recent_projects() -> RecentProjects {
 
     let mut projects: RecentProjects = serde_json::from_str(&data).unwrap_or_default();
 
-    projects.projects.retain(|entry| fs::exists(entry.path));
+    projects.projects.retain(|entry| fs::exists(entry.path).unwrap_or_default());
 
     projects
 }

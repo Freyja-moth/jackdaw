@@ -1934,7 +1934,8 @@ fn discover_gltf_clips(
             continue;
         }
 
-        let handle: Handle<bevy::gltf::Gltf> = asset_server.load(&source.path);
+        let asset_path = crate::entity_ops::to_asset_path(&source.path);
+        let handle: Handle<bevy::gltf::Gltf> = asset_server.load(asset_path);
         let Some(gltf) = gltfs.get(&handle) else {
             continue;
         };

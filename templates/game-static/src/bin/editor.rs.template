@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use bevy::{
-    asset::{AssetPlugin, UnapprovedPathMode},
+    asset::AssetPlugin,
     image::{ImageAddressMode, ImagePlugin, ImageSamplerDescriptor},
     prelude::*,
 };
@@ -29,13 +29,9 @@ fn main() -> AppExit {
         .or_else(|| std::env::current_dir().ok());
 
     // Mirror jackdaw's standalone `src/main.rs` AssetPlugin /
-    // ImagePlugin config. Without these:
-    // - `UnapprovedPathMode::Allow` (vs Bevy's default `Forbid`)
-    //   is required because the material browser feeds absolute
-    //   filesystem paths into `asset_server.load()` when scanning
-    //   project assets.
-    // - The `Repeat` image sampler is the editor's expected
-    //   default for brush materials to tile correctly.
+    // ImagePlugin config: point the asset root at this project's
+    // `assets/`, and use the `Repeat` sampler so brush materials
+    // tile correctly by default.
     let asset_root = project_root
         .as_ref()
         .map(|p| p.join("assets").to_string_lossy().to_string())
@@ -47,7 +43,6 @@ fn main() -> AppExit {
             DefaultPlugins
                 .set(AssetPlugin {
                     file_path: asset_root,
-                    unapproved_path_mode: UnapprovedPathMode::Allow,
                     ..default()
                 })
                 .set(ImagePlugin {

@@ -4514,7 +4514,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jackdaw"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4559,7 +4559,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_animation"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "jackdaw_commands",
@@ -4572,7 +4572,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_api"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "bevy_enhanced_input",
@@ -4587,7 +4587,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_api_internal"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "bevy_enhanced_input",
@@ -4602,7 +4602,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_api_macros"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4611,7 +4611,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_avian_integration"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "avian3d",
  "bevy",
@@ -4619,7 +4619,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_camera"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "jackdaw_commands",
@@ -4627,7 +4627,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_commands"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "serde",
@@ -4635,7 +4635,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_dylib"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "jackdaw_api_internal",
  "jackdaw_commands",
@@ -4644,7 +4644,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_feathers"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "bevy_easings",
@@ -4658,21 +4658,21 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_fuzzy"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "nucleo-matcher",
 ]
 
 [[package]]
 name = "jackdaw_geometry"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
 ]
 
 [[package]]
 name = "jackdaw_jsn"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "jackdaw_geometry",
@@ -4683,7 +4683,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_loader"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "dirs",
@@ -4693,7 +4693,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_node_graph"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "bevy_monitors",
@@ -4706,7 +4706,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_panels"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "jackdaw_feathers",
@@ -4718,7 +4718,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_remote"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "serde",
@@ -4727,7 +4727,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_runtime"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "jackdaw_geometry",
@@ -4739,7 +4739,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_rustc_wrapper"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -4747,7 +4747,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_sdk"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "jackdaw_api",
@@ -4755,7 +4755,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_terrain"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy_math 0.18.1",
  "noise",
@@ -4764,7 +4764,7 @@ dependencies = [
 
 [[package]]
 name = "jackdaw_widgets"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bevy",
  "bevy_enhanced_input",

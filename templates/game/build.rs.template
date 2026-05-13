@@ -11,8 +11,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use syn::{Attribute, Item, visit::Visit};
+use syn::{Attribute, Item, ItemEnum, ItemStruct, ItemUnion, visit::Visit};
 use walkdir::WalkDir;
+
+const REFLECT: &str = "Reflect";
 
 #[derive(thiserror::Error, Debug)]
 pub enum ErrorCause {
@@ -34,8 +36,7 @@ pub struct Error {
 fn main() {
     println!("cargo:rerun-if-changed=src");
 
-    let src_dir = Path::new("src");
-    let mut types = visit_dir(src_dir);
+    let mut types = visit_dir("src");
     types.sort();
     types.dedup();
 
@@ -45,7 +46,7 @@ fn main() {
         .to_owned();
     let types = types
         .iter()
-        .map(|path| format!("    registry.register::<crate::{path}>();"))
+        .map(|path| format!("\tregistry.register::<crate::{path}>();"))
         .collect::<Vec<_>>()
         .join("\n");
     body.push_str(&types);
@@ -59,7 +60,7 @@ fn main() {
     println!("cargo:rustc-cfg=jackdaw_build_has_generated_reflect");
 }
 
-fn visit_dir(dir: &Path) -> Vec<String> {
+fn visit_dir(dir: impl AsRef<Path>) -> Vec<String> {
     WalkDir::new(dir)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -102,15 +103,14 @@ struct ReflectVisitor {
 
 impl<'ast> Visit<'ast> for ReflectVisitor {
     fn visit_item(&mut self, item: &'ast Item) {
-        match item {
-            Item::Struct(s) if has_derive(&s.attrs, "Reflect") => {
-                self.out.push(s.ident.to_string());
-            }
-            Item::Enum(e) if has_derive(&e.attrs, "Reflect") => {
-                self.out.push(e.ident.to_string());
-            }
-            _ => {}
+        if let Item::Struct(ItemStruct { attrs, ident, .. })
+        | Item::Enum(ItemEnum { attrs, ident, .. })
+        | Item::Union(ItemUnion { attrs, ident, .. }) = item
+            && has_derive(&attrs, REFLECT)
+        {
+            self.out.push(ident.to_string());
         }
+
         syn::visit::visit_item(self, item);
     }
 }
@@ -119,6 +119,8 @@ fn has_derive(attrs: &[Attribute], attribute: &str) -> bool {
     attrs.iter().any(|attr| {
         attr.path().is_ident("derive")
             && attr.meta.require_list().is_ok_and(|list| {
+                // TODO: If `parse_nested_meta` is ever changed to allow for returning values,
+                // change it to that
                 let mut found = false;
                 let _ = list.parse_nested_meta(|meta| {
                     found = meta.path.is_ident(attribute);
